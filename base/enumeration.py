@@ -21,11 +21,11 @@ which point the user can then request it by passing an identifier
 to ``enumeration.by(...)``. The types that can be used to filter are
 as follows:
 
-    `name` - Match according to the enumeration name
+    `name` - Filter the enumerations by a name or a list of names
     `like` - Filter the enumeration names according to a glob
     `regex` - Filter the enumeration names according to a regular-expression
     `index` - Match the enumeration by its index
-    `identifier` or `id` - Match the enumeration by its identifier
+    `identifier` or `id` - Filter the enumerations by an identifier or a list of identifers
     `predicate` - Filter the enumerations by passing their identifier to a callable
 
 """
@@ -411,8 +411,8 @@ __matcher__ = utils.matcher()
 __matcher__.attribute('index', idaapi.get_enum_idx)
 __matcher__.combinator('regex', utils.fcompose(utils.fpartial(re.compile, flags=re.IGNORECASE), operator.attrgetter('match')), idaapi.get_enum_name, utils.string.of)
 __matcher__.combinator('like', utils.fcompose(fnmatch.translate, utils.fpartial(re.compile, flags=re.IGNORECASE), operator.attrgetter('match')), idaapi.get_enum_name, utils.string.of)
-__matcher__.boolean('name', lambda name, item: name.lower() == item.lower(), idaapi.get_enum_name, utils.string.of)
-__matcher__.boolean('bitfield', operator.eq, bitfield)
+__matcher__.combinator('name', utils.fcondition(utils.finstance(internal.types.string))(utils.fcompose(operator.methodcaller('lower'), utils.fpartial(utils.fpartial, operator.eq)), utils.fcompose(utils.fpartial(map, operator.methodcaller('lower')), internal.types.set, utils.fpartial(utils.fpartial, operator.contains))), idaapi.get_enum_name, utils.string.of, operator.methodcaller('lower'))
+__matcher__.boolean('bitfield', operator.eq, idaapi.is_bf, operator.truth)
 __matcher__.attribute('id')
 __matcher__.attribute('identifier')
 __matcher__.predicate('pred')
