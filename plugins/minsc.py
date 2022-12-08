@@ -81,7 +81,6 @@ class internal_api(object):
     def __iter__(self):
         '''Yield the full path of each module that is provided by this class.'''
         return
-        yield
 
 class internal_path(internal_api):
     """
@@ -92,7 +91,7 @@ class internal_path(internal_api):
         '''Initialize the loader using the files from the directory specified by `path`.'''
         super(internal_path, self).__init__(path)
         attrs.setdefault('include', '*.py')
-        self.attrs, self.cache = attrs, { name : path for name, path in self.iterate_api(**attrs) }
+        self.attrs, self.cache = attrs, dict(self.iterate_api(**attrs))
 
     def find_module(self, fullname, path=None):
         '''If the module with the name `fullname` matches one of the files handled by our api, then act as their loader.'''
@@ -100,7 +99,7 @@ class internal_path(internal_api):
 
     def load_module(self, fullname):
         '''Iterate through all of the modules that we can handle, and then load it if we've been asked.'''
-        self.cache = { name : path for name, path in self.iterate_api(**self.attrs) }
+        self.cache = dict(self.iterate_api(**self.attrs))
         if fullname not in self.cache:
             raise ImportError("path-loader ({:s}) was not able to find a module named `{:s}`".format(self.path, fullname))
         return self.new_api(fullname, self.cache[fullname])
@@ -141,14 +140,14 @@ class internal_submodule(internal_api):
 
         # Build a temporary cache for the module names and paths to load the api,
         # and use them to build their documentation.
-        cache = { name : path for name, path in self.iterate_api(**self.attrs) }
+        cache = dict(self.iterate_api(**self.attrs))
         maximum = max(map(len, cache)) if cache else 0
         documentation = '\n'.join("{:<{:d}s} : {:s}".format(name, maximum, path) for name, path in sorted(cache.items()))
         documentation = '\n\n'.join([self.attrs['__doc__'], documentation]) if '__doc__' in self.attrs else documentation
         module.__doc__ = documentation
 
         # Load each submodule that composes the api, and attach it to the returned submodule.
-        stack, count, result = [item for item in cache.items()], len(cache), {}
+        stack, count, result = list(cache.items()), len(cache), {}
         while stack and count > 0:
             name, path = stack.pop(0)
 
@@ -262,7 +261,7 @@ def load(namespace, preserve=()):
     # re-populate with the root namespace while restoring any symbols
     # that needed to be preserved.
     namespace.update({symbol : value for symbol, value in module.__dict__.items() if not symbol.startswith('__')})
-    namespace.update({symbol : value for symbol, value in preserved.items()})
+    namespace.update(dict(preserved))
 
 # Just a ctypes wrapper so that we can access the internal IDA api.
 library = ctypes.WinDLL if os.name == 'nt' else ctypes.CDLL
@@ -717,7 +716,7 @@ class MINSC(idaapi.plugin_t):
         try:
             import internal, hooks
 
-        except (ImportError, Exception):
+        except Exception:
             logging.critical("{:s} : An error occurred while trying to import the necessary modules \"{:s}\", and \"{:s}\".".format(__name__, 'internal', 'hooks'), exc_info=True)
             ok = False
 

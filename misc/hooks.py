@@ -34,7 +34,7 @@ def greeting():
     # our plugin state. we abuse each loader's __module__ attribute and consolidate
     # them into a set so that we can take the first.
     items = {item.__module__ for item in itertools.chain(*(items for _, items in loaders.items())) if hasattr(item, '__module__')}
-    module_name = next((name for name in items), loader_suffix)
+    module_name = next(iter(items), loader_suffix)
 
     # next we trim out the module suffix and use it to find the actual module
     # that should contain our plugin so we can extract our plugin state. if the
@@ -54,7 +54,14 @@ def greeting():
     submodules = ((name, itertools.chain(*map(sorted, items))) for name, items in loaders.items() if name)
     loaded = {name: ['.'.join([name, item]) for item in items if not item.startswith('_')] for name, items in submodules}
     maximum = 1 + max(map(len, loaded))
-    submodules = (' '.join(["{:<{:d}s}".format(name + ':', maximum), ', '.join(loaded[name])] if loaded[name] else ["{:<{:d}s}".format(name + ':', maximum)]) for name in sorted(loaded, key=len))
+    submodules = (
+        ' '.join(
+            ["{:<{:d}s}".format(f'{name}:', maximum), ', '.join(loaded[name])]
+            if loaded[name]
+            else ["{:<{:d}s}".format(f'{name}:', maximum)]
+        )
+        for name in sorted(loaded, key=len)
+    )
 
     six.print_("Welcome to the ida-minsc plugin!")
     six.print_("")
@@ -127,8 +134,7 @@ class changingchanged(object):
         events will be able to be stored according to the address that they're
         acting upon.
         """
-        states = getattr(cls, '__states__', {})
-        if states:
+        if states := getattr(cls, '__states__', {}):
             logging.info(u"{:s}.init() : Removing {:d} incomplete states due to re-initialization of database.".format('.'.join([__name__, cls.__name__]), len(states)))
         cls.__states__ = {}
 
@@ -189,7 +195,6 @@ class changingchanged(object):
     def updater(cls):
         '''This coroutine is intended to be implemented by a user and is responsible for keeping track of the changes for a particular address.'''
         raise NotImplementedError
-        (yield)
 
 class address(changingchanged):
     """
@@ -215,7 +220,7 @@ class address(changingchanged):
     def _update_refs(cls, ea, old, new):
         f, rt = cls.get_func_extern(ea)
 
-        oldkeys, newkeys = ({item for item in content.keys()} for content in [old, new])
+        oldkeys, newkeys = (set(content.keys()) for content in [old, new])
         logging.debug(u"{:s}.update_refs({:#x}) : Updating old keys ({!s}) to new keys ({!s}){:s}.".format('.'.join([__name__, cls.__name__]), ea, utils.string.repr(oldkeys), utils.string.repr(newkeys), ' for runtime-linked function' if rt else ''))
         for key in oldkeys ^ newkeys:
             if key not in new:
@@ -233,7 +238,7 @@ class address(changingchanged):
     def _create_refs(cls, ea, content):
         f, rt = cls.get_func_extern(ea)
 
-        contentkeys = {item for item in content.keys()}
+        contentkeys = set(content.keys())
         logging.debug(u"{:s}.create_refs({:#x}) : Creating keys ({!s}){:s}.".format('.'.join([__name__, cls.__name__]), ea, utils.string.repr(contentkeys), ' for runtime-linked function' if rt else ''))
         for key in contentkeys:
             logging.debug(u"{:s}.create_refs({:#x}) : Increasing reference count for {!s} at {:s} {:#x}.".format('.'.join([__name__, cls.__name__]), ea, utils.string.repr(key), 'address', ea))
@@ -245,7 +250,7 @@ class address(changingchanged):
     def _delete_refs(cls, ea, content):
         f, rt = cls.get_func_extern(ea)
 
-        contentkeys = {item for item in content.keys()}
+        contentkeys = set(content.keys())
         logging.debug(u"{:s}.delete_refs({:#x}) : Deleting keys ({!s}){:s}.".format('.'.join([__name__, cls.__name__]), ea, utils.string.repr(contentkeys), ' from runtime-linked function' if rt else ''))
         for key in contentkeys:
             logging.debug(u"{:s}.delete_refs({:#x}) : Decreasing reference count for {!s} at {:s} {:#x}.".format('.'.join([__name__, cls.__name__]), ea, utils.string.repr(key), 'address', ea))
@@ -431,7 +436,7 @@ class globals(changingchanged):
     """
     @classmethod
     def _update_refs(cls, fn, old, new):
-        oldkeys, newkeys = ({item for item in content.keys()} for content in [old, new])
+        oldkeys, newkeys = (set(content.keys()) for content in [old, new])
         logging.debug(u"{:s}.update_refs({:#x}) : Updating old keys ({!s}) to new keys ({!s}).".format('.'.join([__name__, cls.__name__]), interface.range.start(fn) if fn else idaapi.BADADDR, utils.string.repr(oldkeys), utils.string.repr(newkeys)))
         for key in oldkeys ^ newkeys:
             if key not in new:
@@ -445,7 +450,7 @@ class globals(changingchanged):
 
     @classmethod
     def _create_refs(cls, fn, content):
-        contentkeys = {item for item in content.keys()}
+        contentkeys = set(content.keys())
         logging.debug(u"{:s}.create_refs({:#x}) : Creating keys ({!s}).".format('.'.join([__name__, cls.__name__]), interface.range.start(fn) if fn else idaapi.BADADDR, utils.string.repr(contentkeys)))
         for key in contentkeys:
             logging.debug(u"{:s}.create_refs({:#x}) : Increasing reference count for {!s} at {:s} {:#x}.".format('.'.join([__name__, cls.__name__]), interface.range.start(fn) if fn else idaapi.BADADDR, utils.string.repr(key), 'function' if fn else 'global', interface.range.start(fn)))
@@ -454,7 +459,7 @@ class globals(changingchanged):
 
     @classmethod
     def _delete_refs(cls, fn, content):
-        contentkeys = {item for item in content.keys()}
+        contentkeys = set(content.keys())
         logging.debug(u"{:s}.delete_refs({:#x}) : Deleting keys ({!s}).".format('.'.join([__name__, cls.__name__]), interface.range.start(fn) if fn else idaapi.BADADDR, utils.string.repr(contentkeys)))
         for key in contentkeys:
             logging.debug(u"{:s}.delete_refs({:#x}) : Decreasing reference count for {!s} at {:s} {:#x}.".format('.'.join([__name__, cls.__name__]), interface.range.start(fn) if fn else idaapi.BADADDR, utils.string.repr(key), 'function' if fn else 'global', interface.range.start(fn)))
@@ -814,7 +819,7 @@ def on_init(idp_modname):
 
     # Database has just been opened, setup the initial state.
     global State
-    if State == None:
+    if State is None:
         State = state.init
     else:
         logging.debug(u"{:s}.on_init({!s}) : Received unexpected state transition from state ({!s}).".format(__name__, utils.string.repr(idp_modname), utils.string.repr(State)))
@@ -900,34 +905,43 @@ def __process_functions(percentage=0.10):
     It's intended to be called once the database is ready to be tampered with.
     """
     implicit = {'__typeinfo__', '__name__'}
-    P, globals = ui.Progress(), {ea : count for ea, count in internal.comment.globals.iterate()}
+    P, globals = ui.Progress(), dict(internal.comment.globals.iterate())
 
     # Now we need to gather all of our imports so that we can clean up any functions
     # that are runtime-linked addresses. This is because IDA seems to create a
     # func_t for certain imports.
-    imports = {item for item in []}
+    imports = set([])
     for idx in range(idaapi.get_import_module_qty()):
         idaapi.enum_import_names(idx, lambda address, name, ordinal: imports.add(address) or True)
 
     # Now that we have our imports, we can iterate through all of the functions.
-    total, funcs = 0, [ea for ea in database.functions()]
+    total, funcs = 0, list(database.functions())
     P.update(current=0, max=len(funcs), title=u"Pre-building the tag cache and its index...")
     P.open()
     six.print_(u"Indexing the tags for {:d} functions.".format(len(funcs)))
     for i, fn in enumerate(funcs):
-        chunks = [item for item in function.chunks(fn)]
+        chunks = list(function.chunks(fn))
 
         # Check to see if the progress bar was cancelled for "some reason". If
         # so, we double-check if that's what the user really wanted.
         if P.canceled:
             six.print_(u"User opted to cancel building the tag cache at function {:#x} ({:d} of {:d}) after having indexed {:d} tag{:s}.".format(fn, 1 + i, len(funcs), total, '' if total == 1 else 's'))
 
-            # Confirm with the user that they really don't care for indexing.
-            message = []
             start, stop = database.config.bounds()
-            message.append(u"We are {:.02f}% complete at function {:#x} ({:d} of {:d}) having indexed only {:d} tag{:s} for the range {:#x}<>{:#x}.".format(100. * i / float(len(funcs)), fn, 1 + i, len(funcs),  total, '' if total == 1 else 's', start, stop))
-            message.append(u"If you cancel now, some of the notations made by the application prior to this process will be non-queryable via select.")
-            message.append(u'Are you sure?')
+            message = [
+                u"We are {:.02f}% complete at function {:#x} ({:d} of {:d}) having indexed only {:d} tag{:s} for the range {:#x}<>{:#x}.".format(
+                    100.0 * i / float(len(funcs)),
+                    fn,
+                    1 + i,
+                    len(funcs),
+                    total,
+                    '' if total == 1 else 's',
+                    start,
+                    stop,
+                ),
+                u"If you cancel now, some of the notations made by the application prior to this process will be non-queryable via select.",
+                u'Are you sure?',
+            ]
             if ui.ask.yn('\n'.join(message), no=True):
                 six.print_(u"User aborted the build of the tag cache at function {:#x} ({:d} of {:d}) and has indexed only {:d} tag{:s}.".format(fn, 1 + i, len(funcs), total, '' if total == 1 else 's'))
                 break
@@ -956,14 +970,14 @@ def __process_functions(percentage=0.10):
 
         # Grab the currently existing cache for the current function, and use
         # it to tally up all of the reference counts for the tags.
-        contents = {item for item in internal.comment.contents.address(fn, target=fn)}
+        contents = set(internal.comment.contents.address(fn, target=fn))
         for ci, (l, r) in enumerate(chunks):
             P.update(text=text(chunks=len(chunks), plural='' if len(chunks) == 1 else 's'), tooltip="Chunk #{:d} : {:#x} - {:#x}".format(ci, l, r))
 
             # Iterate through each address in the function, only updating the
             # references for tags that are not in our set of implicit ones.
             for ea in database.address.iterate(ui.navigation.analyze(l), r):
-                available = {k for k in database.tag(ea)}
+                available = set(database.tag(ea))
                 for k in available - implicit:
                     if ea in globals: internal.comment.globals.dec(ea, k)
                     if ea not in contents: internal.comment.contents.inc(ea, k, target=fn)
@@ -1016,8 +1030,24 @@ def relocate(info):
 
     # Now we'll need to iterate through our functions and globals in order to filter
     # them and calculate the number of items we'll be expecting to process.
-    count = sum(1 for ea in functions if any(info[si].to <= ea <= info[si].to + info[si].size for si in range(info.size())))
-    count+= sum(1 for ea, _ in globals if any(info[si]._from <= ea <= info[si]._from + info[si].size for si in range(info.size())))
+    count = sum(
+        any(
+            (
+                info[si].to <= ea <= info[si].to + info[si].size
+                for si in range(info.size())
+            )
+        )
+        for ea in functions
+    )
+    count += sum(
+        any(
+            (
+                info[si]._from <= ea <= info[si]._from + info[si].size
+                for si in range(info.size())
+            )
+        )
+        for ea, _ in globals
+    )
 
     # Create our progress bar that we'll continuously update using the number of
     # items that we just calculated from filtering our functions and globals.
@@ -1034,10 +1064,13 @@ def relocate(info):
         # abort this process, then the index will be desynchronized. Or really, it'll be
         # completely out-of-sync and should likely be removed since it's corrupt.
         if P.canceled:
-            message = []
-            message.append(u'If you abort this process, the tag cache and its index will become desynchronized (corrupt) which will result in spectacular failures when querying.')
-            message.append(u"We are currently relocating segment {:d} of {:d} from {:#x} to {:#x}.".format(1 + si, scount, info[si]._from, info[si].to))
-            message.append(u'Are you REALLY sure?')
+            message = [
+                'If you abort this process, the tag cache and its index will become desynchronized (corrupt) which will result in spectacular failures when querying.',
+                u"We are currently relocating segment {:d} of {:d} from {:#x} to {:#x}.".format(
+                    1 + si, scount, info[si]._from, info[si].to
+                ),
+                'Are you REALLY sure?',
+            ]
             if ui.ask.yn('\n'.join(message), no=True):
                 six.print_(u"User aborted relocating the tag cache and its index at segment {:d} of {:d} from {:#x} to {:#x}.".format(1 + si, scount, info[si]._from, info[si].to))
                 break
@@ -1052,7 +1085,7 @@ def relocate(info):
         # using a version of IDA prior to 7.3, then when our event has been dispatched
         # the netnodes have already been moved.
         listable = [ea for ea in functions if info[si].to <= ea < info[si].to + info[si].size]
-        for i, offset in __relocate_function(info[si]._from, info[si].to, info[si].size, (item for item in listable), moved=True if idaapi.__version__ < 7.3 else False):
+        for i, offset in __relocate_function(info[si]._from, info[si].to, info[si].size, iter(listable), moved=idaapi.__version__ < 7.3):
             name = database.name(info[si].to + offset)
             text = u"Relocating function {:d} of {:d}{:s}: {:#x} -> {:#x}".format(1 + i, len(listable), " ({:s})".format(name) if name else '', info[si]._from + offset, info[si].to + offset)
             P.update(value=sum([fcount, gcount, i]), text=text)
@@ -1061,7 +1094,7 @@ def relocate(info):
 
         # Iterate through all of the globals that were moved.
         listable = [(ea, count) for ea, count in globals if info[si]._from <= ea < info[si]._from + info[si].size]
-        for i, offset in __relocate_globals(info[si]._from, info[si].to, info[si].size, (item for item in listable)):
+        for i, offset in __relocate_globals(info[si]._from, info[si].to, info[si].size, iter(listable)):
             name = database.name(info[si].to + offset)
             text = u"Relocating global {:d} of {:d}{:s}: {:#x} -> {:#x}".format(1 + i, len(listable), " ({:s})".format(name) if name else '', info[si]._from + offset, info[si].to + offset)
             P.update(value=sum([fcount, gcount, i]), text=text)
@@ -1077,7 +1110,15 @@ def __relocate_function(old, new, size, iterable, moved=False):
     which happens when the database has been relocated via "Rebase Program".
     """
     key = internal.comment.tagging.__address__
-    failure, total, index = [], [item for item in iterable], {ea : keys for ea, keys in internal.comment.contents.iterate() if old <= ea < old + size}
+    failure, total, index = (
+        [],
+        list(iterable),
+        {
+            ea: keys
+            for ea, keys in internal.comment.contents.iterate()
+            if old <= ea < old + size
+        },
+    )
 
     for i, fn in enumerate(total):
         offset = fn - new
@@ -1132,7 +1173,7 @@ def __relocate_function(old, new, size, iterable, moved=False):
     # Now we need to gather all of our imports so that we can clean up any functions
     # that are runtime-linked addresses. This is because IDA seems to create a
     # func_t for certain imports.
-    imports = {item for item in []}
+    imports = set([])
     for idx in range(idaapi.get_import_module_qty()):
         idaapi.enum_import_names(idx, lambda address, name, ordinal: imports.add(address) or True)
 
@@ -1160,7 +1201,7 @@ def __relocate_function(old, new, size, iterable, moved=False):
             logging.critical(u"{:s}.relocate_function({:#x}, {:#x}, {:+#x}, {!r}) : Refusing to clean up index for {:#x} as it has been relocated to {:#x} which is in use by function ({:#x}).".format(__name__, old, new, size, iterable, ea, offset + new, interface.range.start(ch)))
             continue
         elif ch.flags & idaapi.FUNC_TAIL:
-            owners = [item for item in function.chunk.owners(target)]
+            owners = list(function.chunk.owners(target))
             logging.info(u"{:s}.relocate_function({:#x}, {:#x}, {:+#x}, {!r}) : Cache at {:#x} should've been relocated to {:#x} but is a tail associated with more than one function ({:s}).".format(__name__, old, new, size, iterable, ea, target, ', '.join(map("{:#x}".format, owners))))
         else:
             logging.info(u"{:s}.relocate_function({:#x}, {:#x}, {:+#x}, {!r}) : Cache at {:#x} should've been relocated to {:#x} but its boundaries ({:#x}<>{:#x}) do not correspond with a function ({:#x}).".format(__name__, old, new, size, iterable, ea, target, interface.range.start(ch), interface.range.end(ch), interface.range.start(fn)))
@@ -1174,7 +1215,7 @@ def __relocate_function(old, new, size, iterable, moved=False):
 def __relocate_globals(old, new, size, iterable):
     '''Relocate the global tuples (address, count) in `iterable` from address `old` to `new` adjusting them by the specified `size`.'''
     node = internal.comment.tagging.node()
-    failure, total = [], [item for item in iterable]
+    failure, total = [], list(iterable)
     for i, (ea, count) in enumerate(total):
         offset = ea - old
 
@@ -1228,14 +1269,14 @@ def segm_moved(source, destination, size, changed_netmap):
     P.open()
 
     # Iterate through each function that we're moving and relocate its contents.
-    for i, offset in __relocate_function(source, destination, size, (item for item in functions), moved=not changed_netmap):
+    for i, offset in __relocate_function(source, destination, size, iter(functions), moved=not changed_netmap):
         name = database.name(destination + offset)
         text = u"Relocating function {:d} of {:d}{:s}: {:#x} -> {:#x}".format(1 + i, len(functions), " ({:s})".format(name) if name else '', source + offset, destination + offset)
         P.update(value=i, text=text)
         ui.navigation.procedure(destination + offset)
 
     # Iterate through each global that we're moving (we use the target address, because IDA moved everything already).
-    for i, offset in __relocate_globals(source, destination, size, (item for item in globals)):
+    for i, offset in __relocate_globals(source, destination, size, iter(globals)):
         name = database.name(destination + offset)
         text = u"Relocating global {:d} of {:d}{:s}: {:#x} -> {:#x}".format(1 + i, len(globals), " ({:s})".format(name) if name else '', source + offset, destination + offset)
         P.update(value=len(functions) + i, text=text)
@@ -1300,21 +1341,17 @@ class naming(changingchanged):
         if expected == original:
             pass
 
-        # If our new_name is cleared, then we're removing it.
         elif not expected:
             context.dec(new_ea, '__name__') if target is None else context.dec(new_ea, '__name__', target=target)
             logging.info(u"{:s}.event() : Decremented {:s} reference for rename at {:#x} from {!r} to {!r}.".format('.'.join([__name__, cls.__name__]), 'global' if target is None else 'content', ea, original, expected))
 
-        # If our previous name nonexistent, or is a label (and not custom) then we add the reference.
         elif not original or (labelQ and not customQ):
             context.inc(new_ea, '__name__') if target is None else context.inc(new_ea, '__name__', target=target)
             logging.info(u"{:s}.event() : Incremented {:s} reference for rename at {:#x} from {!r} to {!r}.".format('.'.join([__name__, cls.__name__]), 'global' if target is None else 'content', ea, original, expected))
 
-        # If it was both a label and it was custom, then log a warning because we have no idea.
-        elif labelQ and customQ:
+        elif labelQ:
             logging.debug(u"{:s}.event() : Ignoring existing symbol rename ({:s}) received as a {:s} reference for at {:#x} from {!r} to {!r}.".format('.'.join([__name__, cls.__name__]), ', '.join(itertools.chain(['FF_LABL'] if labelQ else [], ['FF_NAME'] if customQ else [])), 'global' if target is None else 'content', ea, original, expected))
 
-        # Debug log showing that we didn't have to do anything.
         else:
             logging.debug(u"{:s}.event() : Skipping rename at {:#x} from {!r} to {!r}.".format('.'.join([__name__, cls.__name__]), ea, original, expected))
         return
@@ -1380,7 +1417,7 @@ class naming(changingchanged):
             return
 
         # if it's currently a label or is unnamed
-        if (labelQ and not customQ) or all(not q for q in {labelQ, customQ}):
+        if (labelQ and not customQ) or not any({labelQ, customQ}):
             ctx.inc(ea, '__name__')
             logging.debug(u"{:s}.rename({:#x}, {!r}) : Increasing reference count for tag {!r} at address due to a new name.".format('.'.join([__name__, cls.__name__]), ea, newname, '__name__'))
         return
@@ -1454,14 +1491,7 @@ class extra_cmt(changingchanged):
             return logging.debug(u"{:s}.changed({:#x}, {:d}, {!r}) : Exiting event for address {:#x} due to the index ({:d}) not pointing to the comment start ({:d}).".format('.'.join([__name__, cls.__name__]), ea, line_idx, cmt, ea, line_idx, base_idx))
 
         # Now we need to figure out whether we've added an extra_cmt, or removed it.
-        if cmt is None:
-            return ctx.dec(ea, tag)
-
-        # XXX: If an "extra" comment is updated more than once, then we unfortunately
-        #      lose track of the reference and it's permanently cached. There's nothing
-        #      we can really do here except for keep a complete state of all of the
-        #      extra comments that the user has created.
-        return ctx.inc(ea, tag)
+        return ctx.dec(ea, tag) if cmt is None else ctx.inc(ea, tag)
 
     @classmethod
     def changed_multiple(cls, ea, line_idx, cmt):
@@ -1549,7 +1579,7 @@ def func_tail_appended(pfn, tail):
     than one, then we simply add the references in the tail to the function.
     """
     bounds = interface.range.bounds(tail)
-    referrers = [fn for fn in function.chunk.owners(bounds.left)]
+    referrers = list(function.chunk.owners(bounds.left))
 
     # If the number of referrers is larger than just 1, then the tail is
     # owned by more than one function. We still doublecheck, though, to
@@ -1591,7 +1621,7 @@ def removing_func_tail(pfn, tail):
     in the cache for the function that the tail was removed from.
     """
     bounds = interface.range.bounds(tail)
-    referrers = [fn for fn in function.chunk.owners(bounds.left)]
+    referrers = list(function.chunk.owners(bounds.left))
 
     # Before we do anything, we need to make sure we can iterate through the
     # boundaries in the database that we're supposed to act upon.
@@ -1700,7 +1730,7 @@ def add_func(pfn):
     implicit = {'__typeinfo__', '__name__'}
 
     # figure out the newly added function's address, and gather all the imports.
-    ea, imports = interface.range.start(pfn), {item for item in []}
+    ea, imports = interface.range.start(pfn), set([])
     for idx in range(idaapi.get_import_module_qty()):
         idaapi.enum_import_names(idx, lambda address, name, ordinal: imports.add(address) or True)
 
@@ -1713,15 +1743,15 @@ def add_func(pfn):
     # to add all the implicit tags and thus we can exclude them here. otherwise,
     # we'll do it ourselves because the functions get post-processed after building
     # in order to deal with the events that we didn't receive.
-    exclude = implicit if changingchanged.is_ready() else {item for item in []}
-    available = {k for k in function.tag(ea)}
+    exclude = implicit if changingchanged.is_ready() else set([])
+    available = set(function.tag(ea))
     [ internal.comment.globals.inc(ea, k) for k in available - exclude ]
 
     # convert all globals into contents whilst making sure that we don't
     # add any of the implicit tags that are handled by other events.
     for l, r in function.chunks(ea):
         for ea in database.address.iterate(l, r):
-            available = {item for item in database.tag(ea)}
+            available = set(database.tag(ea))
             for k in available - implicit:
                 internal.comment.globals.dec(ea, k)
                 internal.comment.contents.inc(ea, k, target=interface.range.start(pfn))

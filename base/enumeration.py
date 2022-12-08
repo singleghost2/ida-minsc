@@ -135,13 +135,22 @@ def by(**type):
     '''Return the identifier for the first enumeration matching the keyword specified by `type`.'''
     searchstring = utils.string.kwargs(type)
 
-    listable = [item for item in iterate(**type)]
+    listable = list(iterate(**type))
     if len(listable) > 1:
-        messages = (u"[{:d}] {:s}{:s} ({:d} members){:s}".format(idaapi.get_enum_idx(item), idaapi.get_enum_name(item), u" & {:#x}".format(mask(item)) if bitfield(item) else u'', len(builtins.list(members(item))), u" // {:s}".format(comment(item)) if comment(item) else u'') for i, item in enumerate(listable))
+        messages = (
+            u"[{:d}] {:s}{:s} ({:d} members){:s}".format(
+                idaapi.get_enum_idx(item),
+                idaapi.get_enum_name(item),
+                u" & {:#x}".format(mask(item)) if bitfield(item) else u'',
+                len(builtins.list(members(item))),
+                u" // {:s}".format(comment(item)) if comment(item) else u'',
+            )
+            for item in listable
+        )
         [ logging.info(msg) for msg in messages ]
         logging.warning(u"{:s}.search({:s}) : Found {:d} matching results. Returning the first enumeration {:#x}.".format(__name__, searchstring, len(listable), listable[0]))
 
-    iterable = (item for item in listable)
+    iterable = iter(listable)
     res = next(iterable, None)
     if res is None:
         raise E.SearchResultsError(u"{:s}.search({:s}) : Found 0 matching results.".format(__name__, searchstring))
@@ -160,12 +169,12 @@ def search(**type):
 
 def names(enum):
     '''Return a set of all of the names belonging to the enumeration `enum`.'''
-    return {item for item in members.names(enum)}
+    return set(members.names(enum))
 keys = utils.alias(names)
 
 def values(enum):
     '''Return a set of all of the values belonging to the enumeration `enum`.'''
-    return {item for item in members.values(enum)}
+    return set(members.values(enum))
 
 ## creation/deletion
 @utils.string.decorate_arguments('name')
@@ -266,7 +275,7 @@ def bitfield(enum):
 def bitfield(enum, boolean):
     '''Toggle the bitfield setting of the enumeration `enum` depending on the value of `boolean`.'''
     eid = by(enum)
-    res, ok = idaapi.is_bf(eid), idaapi.set_enum_bf(eid, True if boolean else False)
+    res, ok = idaapi.is_bf(eid), idaapi.set_enum_bf(eid, bool(boolean))
     if not ok:
         raise E.DisassemblerError(u"{:s}.bitfield({!r}, {!s}) : Unable to set the bitfield flag for the specified enumeration ({:#x}) to {!s}.".format(__name__, enum, boolean, eid, boolean))
     return res
@@ -279,76 +288,6 @@ def up(enum):
     # IDA does not seem to create xrefs to enumeration identifiers.
     raise E.UnsupportedCapability(u"{:s}.up({:#x}) : Unable to locate any cross-references for the specified enumeration due to the disassembler not keeping track of them.".format(__name__, eid))
 
-    # Grab the first reference to the enumeration.
-    if not X.first_to(eid, idaapi.XREF_ALL):
-        return []
-
-    # Continue to grab all the rest of the refs to the enumeration.
-    refs = [(X.frm, X.iscode, X.type)]
-    while X.next_to():
-        refs.append((X.frm, X.iscode, X.type))
-
-    # Iterate through each xref and figure out if the enumeration id is
-    # applied to a structure type.
-    res = []
-    for ref, _, _ in refs:
-
-        # If the reference is not an identifier, then we don't care about
-        # it because it's pointing to code and the member.refs function
-        # should be used for grabbing those.
-        if not interface.node.is_identifier(ref):
-            continue
-
-        # Get mptr, full member name, and sptr for the identifier we found.
-        mpack = idaapi.get_member_by_id(ref)
-        if mpack is None:
-            cls = self.__class__
-            raise E.MemberNotFoundError(u"{:s}.up({:#x}) : Unable to locate the member identified by {:#x}.".format(__name__, eid, ref))
-
-        mptr, name, sptr = mpack
-        if not interface.node.is_identifier(sptr.id):
-            sptr = idaapi.get_member_struc(idaapi.get_member_fullname(mptr.id))
-
-        # Verify the type of the mptr is correct so that we can use it.
-        if not isinstance(mptr, idaapi.member_t):
-            cls, name = self.__class__, idaapi.get_member_fullname(ref)
-            raise E.InvalidTypeOrValueError(u"{:s}.up({:#x}) : Unexpected type {!s} returned for member \"{:s}\".".format(__name__, eid, mptr.__class__, internal.utils.string.escape(name, '"')))
-
-        # Use the mptr identifier to determine if we're referencing a frame.
-        frname, _ = name.split('.', 1)
-        frid = internal.netnode.get(frname)
-        ea = idaapi.get_func_by_frame(frid)
-
-        # If we couldn't find a frame for it, then this is a structure member
-        # and we can just grab it using the structure module.
-        if ea == idaapi.BADADDR:
-            st = structure.by_identifier(sptr.id)
-            mem = st.members.by_identifier(mptr.id)
-            res.append(mem)
-            continue
-
-        # Otherwise, we know that this is a a function frame and
-        # we can just grab it using idaapi.get_frame. We also
-        # need the idaapi.func_t for it to get the frame size.
-        fr = idaapi.get_frame(ea)
-        if fr is None:
-            cls = self.__class__
-            raise E.MissingTypeOrAttribute(u"{:s}.up({:#x}) : The function at {:#x} for frame member {:#x} does not have a frame.".format(__name__, eid, ea, mptr.id))
-
-        f = idaapi.get_func(ea)
-        if f is None:
-            cls = self.__class__
-            raise E.FunctionNotFoundError(u"{:s}.up({:#x}) : Unable to locate the function for frame member {:#x} by address {:#x}.".format(__name__, eid, mptr.id, ea))
-
-        # Now that we have everything we need, we use the structure
-        # module and the idaapi.func_t we fetched to instantiate the
-        # structure with the correct offset and then fetch the member
-        # to aggregate to our list of results.
-        st = structure.by_identifier(fr.id, offset=-f.frsize)
-        mem = st.members.by_identifier(mptr.id)
-        res.append(mem)
-    return res
-
 def repr(enum):
     '''Return a printable summary of the enumeration `enum`.'''
     eid = by(enum)
@@ -358,9 +297,25 @@ def repr(enum):
     # Figure out the padding for each component belonging to a member of the
     # enumeration in order to keep them aligned properly when displaying them.
     maxindex = max(len("[{:d}]".format(index)) for index, _ in enumerate(items)) if items else 1
-    maxname = max(len(name) for name, _, _, _ in items) if items else 0
-    maxvalue = max(len("{:#{:d}x}".format(value, 2 + w)) for name, value, mask, _ in items) if items else 1
-    maxbname = max(len(utils.string.of(idaapi.get_bmask_name(eid, mask)) if idaapi.get_bmask_name(eid, mask) else u'') for name, value, mask, _ in items) if items else 0
+    maxname = max((len(name) for name, _, _, _ in items), default=0)
+    maxvalue = max(
+        (
+            len("{:#{:d}x}".format(value, 2 + w))
+            for name, value, mask, _ in items
+        ),
+        default=1,
+    )
+    maxbname = max(
+        (
+            len(
+                utils.string.of(idaapi.get_bmask_name(eid, mask))
+                if idaapi.get_bmask_name(eid, mask)
+                else u''
+            )
+            for name, value, mask, _ in items
+        ),
+        default=0,
+    )
 
     # If the enumeration is a bitfield, then make sure to include the bitmask and
     # its name if one was defined.
@@ -404,10 +359,10 @@ def __iterate__():
 def iterate(**type):
     '''Iterate through all of the enumerations in the database that match the keyword specified by `type`.'''
     if not type: type = {'predicate': lambda item: True}
-    listable = [item for item in __iterate__()]
+    listable = list(__iterate__())
     for key, value in type.items():
-        listable = [item for item in __matcher__.match(key, value, listable)]
-    for item in listable: yield item
+        listable = list(__matcher__.match(key, value, listable))
+    yield from listable
 
 @utils.multicase(string=six.string_types)
 @utils.string.decorate_arguments('string')
@@ -418,7 +373,7 @@ def list(string):
 @utils.string.decorate_arguments('regex', 'like', 'name')
 def list(**type):
     '''List all of the enumerations within the database that match the keyword specified by `type`.'''
-    res = [item for item in iterate(**type)]
+    res = list(iterate(**type))
 
     maxindex = max(builtins.map(idaapi.get_enum_idx, res) if res else [1])
     maxname = max(builtins.map(utils.fcompose(idaapi.get_enum_name, len), res) if res else [0])
@@ -498,7 +453,7 @@ class members(object):
         If an integral is provided for `bitmask` or `serial`, then only return true if the member is within the specified bitmask, or uses the provided serial.
         """
         eid = by(enum)
-        iterable = (mid for mid in cls.iterate(eid))
+        iterable = iter(cls.iterate(eid))
         iterable = ((member.value(mid), member.mask(mid), member.serial(mid)) for mid in iterable)
         for item, mask, cid in iterable:
             if (item, mask) == (value, bitmask.get('bitmask', idaapi.DEFMASK)):
@@ -524,7 +479,7 @@ class members(object):
         ok = idaapi.add_enum_member(eid, string, value, bmask)
 
         err = {getattr(idaapi, item) : item for item in ['ENUM_MEMBER_ERROR_NAME', 'ENUM_MEMBER_ERROR_VALUE', 'ENUM_MEMBER_ERROR_ENUM', 'ENUM_MEMBER_ERROR_MASK', 'ENUM_MEMBER_ERROR_ILLV']}
-        if ok in err.keys():
+        if ok in err:
             raise E.DisassemblerError(u"{:s}.add({!r}, {!s}, {:#x}{:s}) : Unable to add a member to the enumeration ({:#x}) with the specified name ({!s}) and value ({:#x}) due to error {:s}({:d}).".format('.'.join([__name__, cls.__name__]), enum, utils.string.repr(name), value, u", {:s}".format(utils.string.kwargs(bitmask)) if bitmask else u'', eid, utils.string.repr(fullname), value, err[ok], ok))
         return eid
     new = create = utils.alias(add, 'members')
@@ -542,10 +497,10 @@ class members(object):
         eid = by(enum)
         mid = cls.by(eid, member)
         value, serial, mask = idaapi.get_enum_member_value(mid), idaapi.get_enum_member_serial(mid), idaapi.get_enum_member_bmask(mid)
-        ok = idaapi.del_enum_member(eid, value, serial, mask)
-        if not ok:
+        if ok := idaapi.del_enum_member(eid, value, serial, mask):
+            return ok
+        else:
             raise E.DisassemblerError(u"{:s}.remove({!r}, {!r}) : Unable to remove the specified member ({:#x}) having the value {:d} from the enumeration ({:#x}).".format('.'.join([__name__, cls.__name__]), enum, member, mid, value, eid))
-        return ok
     delete = destroy = utils.alias(remove, 'members')
 
     ## aggregations
@@ -602,13 +557,7 @@ class members(object):
 
         # First we need to figure out if this is a bitfield, because if
         # it is..then we need to figure out the masks to filter by.
-        if bitfieldQ:
-            results = [item for _, item in masks(eid)]
-
-        # Otherwise, there's only one mask to search through, the DEFMASK.
-        else:
-            results = [idaapi.DEFMASK]
-
+        results = [item for _, item in masks(eid)] if bitfieldQ else [idaapi.DEFMASK]
         # Now that we have all the masks, we need to figure out all of the
         # serial numbers for the desired value throughout all our masks.
         available = []
@@ -647,10 +596,8 @@ class members(object):
         if bitfieldQ and 'bitmask' in filters:
             filtered = [(item, mask, cid) for item, mask, cid in available if mask in {bitmask}]
 
-        # Otherwise we just take everything from the matched so that way we
-        # can do filter for the serial if the caller gave it to us.
         else:
-            filtered = [(item, mask, cid) for item, mask, cid in available]
+            filtered = list(available)
 
         # Next we need to check to see if the user gave us a serial to filter
         # our results. So we check our parameters, and then gather our results.
@@ -767,8 +714,7 @@ class members(object):
     def iterate(cls, enum):
         '''Iterate through all ids of each member associated with the enumeration `enum`.'''
         eid = by(enum)
-        for item in cls.__iterate__(eid):
-            yield item
+        yield from cls.__iterate__(eid)
         return
 
     @classmethod
@@ -835,10 +781,10 @@ class member(object):
     def remove(cls, mid):
         '''Remove the enumeration member with the given `mid`.'''
         eid, value, serial, mask = cls.parent(mid), cls.value(mid), cls.serial(mid), cls.mask(mid)
-        ok = idaapi.del_enum_member(eid, value, serial, mask)
-        if not ok:
+        if ok := idaapi.del_enum_member(eid, value, serial, mask):
+            return ok
+        else:
             raise E.DisassemblerError(u"{:s}.remove({:#x}) : Unable to remove the specified member ({:#x}) having the value {:d} from the enumeration ({:#x}).".format('.'.join([__name__, cls.__name__]), mid, mid, value, eid))
-        return ok
     @utils.multicase()
     @classmethod
     def remove(cls, enum, member):
@@ -1102,8 +1048,7 @@ class masks(object):
     def iterate(cls, enum):
         '''Iterate through all of the masks belonging to the enumeration `enum`.'''
         eid = by(enum)
-        for item in cls.__iterate__(eid):
-            yield item
+        yield from cls.__iterate__(eid)
         return
 
     @utils.multicase(mask=six.integer_types)
@@ -1169,11 +1114,11 @@ class masks(object):
     def list(cls, enum):
         '''List all the masks belonging to the enumeration identified by `enum`.'''
         eid = by(enum)
-        listable = [item for item in cls.iterate(eid)]
+        listable = list(cls.iterate(eid))
 
         maxindex = max(len("[{:d}]".format(index)) for index, _ in enumerate(listable)) if listable else 1
-        maxname = max(len(cls.name(eid, mask)) for mask in listable) if listable else 0
-        maxmask = max(listable) if listable else 1
+        maxname = max((len(cls.name(eid, mask)) for mask in listable), default=0)
+        maxmask = max(listable, default=1)
         masksize = 2 * size(eid) if size(eid) else utils.string.digits(maxmask, 16)
 
         for i, mask in enumerate(listable):

@@ -95,9 +95,9 @@ class ask(object):
         state = {'no': getattr(idaapi, 'ASKBTN_NO', 0), 'yes': getattr(idaapi, 'ASKBTN_YES', 1), 'cancel': getattr(idaapi, 'ASKBTN_CANCEL', -1)}
         results = {state['no']: False, state['yes']: True}
         if default:
-            keys = {item for item in default.keys()}
+            keys = set(default.keys())
             keys = {item.lower() for item in keys if default.get(item, False)}
-            dflt = next((item for item in keys), 'cancel')
+            dflt = next(iter(keys), 'cancel')
         else:
             dflt = 'cancel'
         res = idaapi.ask_yn(state[dflt], internal.utils.string.to(message))
@@ -346,9 +346,7 @@ class state(object):
     def graphview(cls):
         '''Returns true if the current function is being viewed in graph view mode.'''
         res = idaapi.get_inf_structure()
-        if idaapi.__version__ < 7.0:
-            return res.graph_view != 0
-        return res.is_graph_view()
+        return res.graph_view != 0 if idaapi.__version__ < 7.0 else res.is_graph_view()
 
     @classmethod
     def wait(cls):
@@ -810,8 +808,6 @@ class timer(object):
     def unregister(cls, id):
         '''Unregister the specified `id`.'''
         raise internal.exceptions.UnsupportedCapability(u"{:s}.unregister({!s}) : A lock or a signal is needed here in order to unregister this timer safely.".format('.'.join([__name__, cls.__name__]), id))
-        idaapi.unregister_timer(cls.clock[id])
-        del(cls.clock[id])
     @classmethod
     def reset(cls):
         '''Remove all the registered timers.'''
@@ -968,18 +964,12 @@ class widget(object):
     def open(cls, widget, flags, **target):
         '''Open the `widget` using the specified ``idaapi.WOPN_`` flags.'''
         twidget = cls.form(widget) if cls.isinstance(widget) else widget
-        ok = idaapi.display_widget(twidget, flags)
-        # FIXME: rather than returning whether it succeeded or not, we should
-        #        return what the widget was attached to in order to locate it.
-        return ok
+        return idaapi.display_widget(twidget, flags)
     @classmethod
     def close(cls, widget, flags):
         '''Close the `widget` using the specified ``idaapi.WCLS_`` flags.'''
         twidget = cls.form(widget) if cls.isinstance(widget) else widget
-        ok = idaapi.close_widget(twidget, flags)
-        # FIXME: rather than returning whether it succeeded or not, we should
-        #        return what the widget was attached to before we closed it.
-        return ok
+        return idaapi.close_widget(twidget, flags)
 
     @classmethod
     def show(cls, widget):
@@ -1083,7 +1073,7 @@ class keyboard(object):
 
         # Find a separator that we can use, and use it to join our tuple into a
         # string with each element capitalized. That way it looks good for the user.
-        separator = next(item for item in Separators)
+        separator = next(iter(Separators))
         modifiers, hotkey = key
 
         components = [item.capitalize() for item in modifiers] + [hotkey.capitalize()]
@@ -1118,8 +1108,8 @@ class keyboard(object):
                 key = ''.join(item for item in hotkey if item.lower() not in Modifiers)
 
             # Grab a separator, and join all our components together with it.
-            separator = next(item for item in Separators)
-            components = [item for item in modifiers] + [key]
+            separator = next(iter(Separators))
+            components = list(modifiers) + [key]
             return cls.__normalize_key__(separator.join(components))
 
         # Next we need to normalize the separator used throughout the string by
@@ -1142,7 +1132,7 @@ class keyboard(object):
         if len(key) != 1:
             raise internal.exceptions.InvalidParameterError(u"{:s}.normalize_key({!s}) : An invalid hotkey combination ({!s}) was provided as a parameter.".format('.'.join([__name__, cls.__name__]), internal.utils.string.repr(hotkey), internal.utils.string.repr(hotkey)))
 
-        res = next(item for item in key)
+        res = next(iter(key))
         if len(res) != 1:
             raise internal.exceptions.InvalidParameterError(u"{:s}.normalize_key({!s}) : The hotkey combination {!s} contains the wrong number of keys ({:d}).".format('.'.join([__name__, cls.__name__]), internal.utils.string.repr(hotkey), internal.utils.string.repr(res), len(res)))
 
@@ -1195,11 +1185,9 @@ class keyboard(object):
             else:
                 clsinfo = None if getattr(closure, '__module__', '__main__') in {'__main__'} else closure.__module__
 
-            # Now we can figure out the documentation for the closure that was stored.
-            documentation = closure.__doc__ or ''
-            if documentation:
+            if documentation := closure.__doc__ or '':
                 filtered = [item.strip() for item in documentation.split('\n') if item.strip()]
-                header = next((item for item in filtered), '')
+                header = next(iter(filtered), '')
                 comment = "{:s}...".format(header) if header and len(filtered) > 1 else header
             else:
                 comment = ''
@@ -1430,12 +1418,7 @@ try:
                 logging.warning(u"{:s}.open({!s}, {!s}) : Unable to find main application window. Falling back to default screen dimensions to calculate size.".format('.'.join([__name__, cls.__name__]), width, height))
 
             # figure out the dimensions of the window
-            if main is None:
-                # if there's no window, then assume some screen dimensions
-                w, h = 1024, 768
-            else:
-                w, h = main.width(), main.height()
-
+            w, h = (1024, 768) if main is None else (main.width(), main.height())
             # now we can calculate the dimensions of the progress bar
             logging.info(u"{:s}.open({!s}, {!s}) : Using dimensions ({:d}, {:d}) for progress bar.".format('.'.join([__name__, cls.__name__]), width, height, int(w*width), int(h*height)))
             fixedWidth, fixedHeight = map(math.trunc, [w * width, h * height])
@@ -1647,7 +1630,7 @@ class hook(object):
     """
 
     @classmethod
-    def __start_ida__(ns):
+    def __start_ida__(cls):
         import hooks
 
         # Create an alias to save some typing and a table of the attribute
@@ -1663,35 +1646,46 @@ class hook(object):
         for attribute, (klass, supermethods) in api.items():
 
             # If there's an instance already attached to us, then use it.
-            if hasattr(ns, attribute):
-                instance = getattr(ns, attribute)
+            if hasattr(cls, attribute):
+                instance = getattr(cls, attribute)
 
-            # Otherwise instantiate the priority hooks for each hook type,
-            # and assign it directly into our class. We attach a supermethod
-            # mapping to patch the original supermethods of each hook where
-            # it can either have a completely different number of parameters
-            # or different types than what is listed within the documentation.
             else:
                 instance = priorityhook(klass, supermethods)
-                setattr(ns, attribute, instance)
+                setattr(cls, attribute, instance)
 
             # Log some information about what we've just done.
-            logging.info(u"{:s} : Attached an instance of `{:s}` to `{:s}` which is now available at `{:s}`.".format('.'.join([__name__, ns.__name__]), instance.__class__.__name__, klass.__name__, '.'.join([__name__, ns.__name__, attribute])))
+            logging.info(
+                u"{:s} : Attached an instance of `{:s}` to `{:s}` which is now available at `{:s}`.".format(
+                    '.'.join([__name__, cls.__name__]),
+                    instance.__class__.__name__,
+                    klass.__name__,
+                    '.'.join([__name__, cls.__name__, attribute]),
+                )
+            )
 
         # If the idaapi.__notification__ object exists, then also
         # assign it directly into our namespace.
-        if not hasattr(ns, 'notification') and hasattr(idaapi, '__notification__'):
+        if not hasattr(cls, 'notification') and hasattr(
+            idaapi, '__notification__'
+        ):
             instance = idaapi.__notification__
-            setattr(ns, 'notification', instance)
-            logging.info(u"{:s} : Attached an instance of `{:s}` to {:s} which is now accessible at `{:s}`.".format('.'.join([__name__, ns.__name__]), instance.__class__.__name__, 'notifications', '.'.join([__name__, ns.__name__, 'notification'])))
+            setattr(cls, 'notification', instance)
+            logging.info(
+                u"{:s} : Attached an instance of `{:s}` to {:s} which is now accessible at `{:s}`.".format(
+                    '.'.join([__name__, cls.__name__]),
+                    instance.__class__.__name__,
+                    'notifications',
+                    '.'.join([__name__, cls.__name__, 'notification']),
+                )
+            )
         return
 
     @classmethod
-    def __stop_ida__(ns):
+    def __stop_ida__(cls):
         for api in ['idp', 'idb', 'ui']:
 
             # grab the individual class that was used to hook things
-            instance = getattr(ns, api)
+            instance = getattr(cls, api)
 
             # and then unhook it completely, because IDA on linux
             # seems to still dispatch to those hooks...even when

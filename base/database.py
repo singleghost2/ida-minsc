@@ -103,9 +103,7 @@ class config(object):
     @classmethod
     def lflags(cls):
         '''Return the value of the ``idainfo.lflags`` field from the database.'''
-        if idaapi.__version__ < 7.2:
-            return cls.info.lflags
-        return idaapi.inf_get_lflags()
+        return cls.info.lflags if idaapi.__version__ < 7.2 else idaapi.inf_get_lflags()
     @utils.multicase(mask=six.integer_types)
     @classmethod
     def lflags(cls, mask):
@@ -183,7 +181,7 @@ class config(object):
         '''Return whether the database is a shared-object or not.'''
         if idaapi.__version__ < 7.0:
             raise E.UnsupportedVersion(u"{:s}.is_sharedobject() : This function is only supported on versions of IDA 7.0 and newer.".format('.'.join([__name__, cls.__name__])))
-        return True if cls.lflags(idaapi.LFLG_IS_DLL) else False
+        return bool(cls.lflags(idaapi.LFLG_IS_DLL))
     sharedobject = is_shared = sharedQ = utils.alias(is_sharedobject, 'config')
 
     @classmethod
@@ -191,7 +189,7 @@ class config(object):
         '''Return whether the database is using a kernelmode address space or not.'''
         if idaapi.__version__ < 7.0:
             raise E.UnsupportedVersion(u"{:s}.is_kernelspace() : This function is only supported on versions of IDA 7.0 and newer.".format('.'.join([__name__, cls.__name__])))
-        return True if cls.lflags(idaapi.LFLG_KERNMODE) else False
+        return bool(cls.lflags(idaapi.LFLG_KERNMODE))
     kernelspaceQ = kernelQ = utils.alias(is_kernelspace, 'config')
 
     @utils.multicase()
@@ -241,9 +239,7 @@ class config(object):
         '''Return the operating system type identified by the loader when creating the database.'''
         # FIXME: this is a bitflag that should be documented in libfuncs.hpp
         #        which unfortunately is not included anywhere in the sdk.
-        if idaapi.__version__ < 7.2:
-            return cls.info.ostype
-        return idaapi.inf_get_ostype()
+        return cls.info.ostype if idaapi.__version__ < 7.2 else idaapi.inf_get_ostype()
     @utils.multicase(ostype_t=six.integer_types)
     @classmethod
     def ostype(cls, ostype_t):
@@ -415,9 +411,7 @@ class config(object):
 
     @classmethod
     def main(cls):
-        if idaapi.__version__ < 7.2:
-            return cls.info.main
-        return idaapi.inf_get_main()
+        return cls.info.main if idaapi.__version__ < 7.2 else idaapi.inf_get_main()
 
     @classmethod
     def entry(cls):
@@ -551,7 +545,7 @@ class functions(object):
 
     def __new__(cls):
         '''Return a list of all of the functions in the current database.'''
-        return [item for item in cls.__iterate__()]
+        return list(cls.__iterate__())
 
     @utils.multicase()
     @classmethod
@@ -587,7 +581,7 @@ class functions(object):
         iterable = cls.__iterate__()
         for key, value in (type or {'predicate': utils.fconstant(True)}).items():
             iterable = cls.__matcher__.match(key, value, iterable)
-        for item in iterable: yield item
+        yield from iterable
 
     @utils.multicase(string=six.string_types)
     @classmethod
@@ -619,7 +613,11 @@ class functions(object):
 
             unmangled, realname = function.name(func), name(ea)
             maxname = max(len(unmangled), maxname)
-            maxunmangled = max(len(unmangled), maxunmangled) if not internal.declaration.mangledQ(realname) else maxunmangled
+            maxunmangled = (
+                maxunmangled
+                if internal.declaration.mangledQ(realname)
+                else max(len(unmangled), maxunmangled)
+            )
 
             bounds, items = function.bounds(func), [item for item in function.chunks(func)]
             maxaddr, minaddr = max(max(bounds), maxaddr), max(min(bounds), minaddr)
@@ -647,8 +645,18 @@ class functions(object):
             tags = function.tag(ea)
 
             # any flags that might be useful
-            ftagged = '-' if not tags else '*' if any(not item.startswith('__') for item in tags) else '+'
-            ftyped = 'D' if function.type.is_decompiled(ea) else '-' if not function.type.has_typeinfo(func) else 'T' if interface.node.aflags(ea, idaapi.AFL_USERTI) else 't'
+            ftagged = (
+                ('*' if any(not item.startswith('__') for item in tags) else '+')
+                if tags
+                else '-'
+            )
+            ftyped = (
+                'D'
+                if function.type.is_decompiled(ea)
+                else ('T' if interface.node.aflags(ea, idaapi.AFL_USERTI) else 't')
+                if function.type.has_typeinfo(func)
+                else '-'
+            )
             fframe = '?' if function.type.has_problem(ea, getattr(idaapi, 'PR_BADSTACK', 0xb)) else '-' if idaapi.get_frame(ea) else '^'
             fgeneral = 'J' if func.flags & idaapi.FUNC_THUNK else 'L' if func.flags & idaapi.FUNC_LIB else 'S' if func.flags & idaapi.FUNC_STATICDEF else 'F'
             flags = itertools.chain(fgeneral, fframe, ftyped, ftagged)
@@ -701,14 +709,14 @@ class functions(object):
         '''Search through all of the functions within the database and return the first result matching the keyword specified by `type`.'''
         query_s = utils.string.kwargs(type)
 
-        listable = [item for item in cls.iterate(**type)]
+        listable = list(cls.iterate(**type))
         if len(listable) > 1:
             messages = ((u"[{:d}] {:s}".format(i, function.name(ea))) for i, ea in enumerate(listable))
             [ logging.info(msg) for msg in messages ]
             f = utils.fcompose(function.by, function.name)
             logging.warning(u"{:s}.search({:s}) : Found {:d} matching results. Returning the first function \"{:s}\".".format('.'.join([__name__, cls.__name__]), query_s, len(listable), utils.string.escape(f(listable[0]), '"')))
 
-        iterable = (item for item in listable)
+        iterable = iter(listable)
         res = builtins.next(iterable, None)
         if res is None:
             raise E.SearchResultsError(u"{:s}.search({:s}) : Found 0 matching results.".format('.'.join([__name__, cls.__name__]), query_s))
@@ -998,10 +1006,10 @@ class names(object):
     @classmethod
     @utils.string.decorate_arguments('name', 'like', 'regex')
     def __iterate__(cls, **type):
-        iterable = (idx for idx in builtins.range(idaapi.get_nlist_size()))
+        iterable = iter(builtins.range(idaapi.get_nlist_size()))
         for key, value in (type or {'predicate': utils.fconstant(True)}).items():
             iterable = cls.__matcher__.match(key, value, iterable)
-        for item in iterable: yield item
+        yield from iterable
 
     @utils.multicase(string=six.string_types)
     @classmethod
@@ -1059,7 +1067,11 @@ class names(object):
             ftype = 'I' if idaapi.segtype(ea) == idaapi.SEG_XTRN else '-' if t.is_unknown(ea) else 'C' if t.is_code(ea) else 'D' if t.is_data(ea) else '-'
             finitialized = '^' if t.is_initialized(ea) else '-'
             tags.pop('__name__', None)
-            ftagged = '-' if not tags else '*' if any(not item.startswith('__') for item in tags) else '+'
+            ftagged = (
+                ('*' if any(not item.startswith('__') for item in tags) else '+')
+                if tags
+                else '-'
+            )
             flags = itertools.chain(finitialized, ftype, ftagged)
 
             # Figure out which name we need to use, the mangled one or the real one.
@@ -1087,14 +1099,14 @@ class names(object):
         MNG_LONG_FORM = getattr(idaapi, 'MNG_LONG_FORM', 0x6400007)
 
         query_s = utils.string.kwargs(type)
-        listable = [item for item in cls.__iterate__(**type)]
+        listable = list(cls.__iterate__(**type))
         if len(listable) > 1:
             f1, f2 = idaapi.get_nlist_ea, utils.fcompose(idaapi.get_nlist_name, utils.string.of)
             messages = ((u"[{:d}] {:#x} {:s}".format(idx, ea, name if Fmangled_type(utils.string.to(name)) == MANGLED_UNKNOWN else "({:s}) {:s}".format(name, utils.string.of(idaapi.demangle_name(name, MNG_LONG_FORM) or name))) for idx, ea, name in map(utils.fmap(utils.fidentity, f1, f2), listable)))
             [ logging.info(msg) for msg in messages ]
             logging.warning(u"{:s}.search({:s}) : Found {:d} matching results, Returning the first item at {:#x} with the name \"{:s}\".".format('.'.join([__name__, cls.__name__]), query_s, len(listable), f1(listable[0]), utils.string.escape(f2(listable[0]), '"')))
 
-        iterable = (item for item in listable)
+        iterable = iter(listable)
         res = builtins.next(iterable, None)
         if res is None:
             raise E.SearchResultsError(u"{:s}.search({:s}) : Found 0 matching results.".format('.'.join([__name__, cls.__name__]), query_s))
@@ -1225,9 +1237,8 @@ class search(object):
 
             # It seems that idaapi.parse_binpat_str() returns an empty string on success, and None on failure...
             res = idaapi.parse_binpat_str(patterns, ea, utils.string.to(query), radix, direction.get('encoding', 0))
-            ok = not (res is None)
+            ok = res is not None
 
-        # Otherwise we were given an idaapi.compiled_binpat_vec_t, and we don't need to do any parsing.
         else:
             ok, patterns = len(query) > 0, query
 
@@ -1412,7 +1423,7 @@ class search(object):
         # Check if we were given multiple patterns for any particular reason and
         # combine them into a list so we can parse them all individually.
         listable = pattern if isinstance(pattern, (builtins.tuple, builtins.set, builtins.list)) else [pattern]
-        patterns = [pattern for pattern in listable]
+        patterns = list(listable)
 
         # Extract the radix if we were given one so that we can pretty up the logs.
         radix, formats = direction.get('radix', 16), {8: "{:0o}".format, 10: "{:d}".format, 16: "{:02x}".format}
@@ -1865,8 +1876,7 @@ class entries(object):
 
     def __new__(cls):
         '''Yield the address of each entry point defined within the database.'''
-        for ea in cls.iterate():
-            yield ea
+        yield from cls.iterate()
         return
 
     @utils.multicase(string=six.string_types)
@@ -1880,8 +1890,8 @@ class entries(object):
     def __iterate__(cls, **type):
         listable = builtins.range(idaapi.get_entry_qty())
         for key, value in (type or {'predicate': utils.fconstant(True)}).items():
-            listable = [item for item in cls.__matcher__.match(key, value, listable)]
-        for item in listable: yield item
+            listable = list(cls.__matcher__.match(key, value, listable))
+        yield from listable
 
     @utils.multicase(string=six.string_types)
     @classmethod
@@ -1986,7 +1996,9 @@ class entries(object):
             listable.append(index)
 
         # Collect the maximum sizes for everything from the first pass
-        cindex, cordinal = (utils.string.digits(maxindex, 10) for item in [maxindex, maxordinal])
+        cindex, cordinal = (
+            utils.string.digits(maxindex, 10) for _ in [maxindex, maxordinal]
+        )
         caddr = utils.string.digits(maxaddr, 16)
 
         # List all the fields from everything that matched
@@ -1999,10 +2011,18 @@ class entries(object):
 
             # Some flags that could be useful.
             fclass = 'A' if t.is_data(ea) or t.is_unknown(ea) else 'D' if function.within(ea) and function.type.is_decompiled(ea) else 'F' if function.within(ea) else 'C' if t.is_code(ea) else '-'
-            finitialized = '-' if not t.is_initialized(ea) else 'C' if t.is_code(ea) else 'D' if t.is_data(ea) else '^'
+            finitialized = (
+                ('C' if t.is_code(ea) else 'D' if t.is_data(ea) else '^')
+                if t.is_initialized(ea)
+                else '-'
+            )
             ftyped = 'T' if get_tinfo(idaapi.tinfo_t(), ea) else 't' if t.has_typeinfo(ea) else '-'
             tags.pop('__name__', None)
-            ftagged = '-' if not tags else '*' if any(not item.startswith('__') for item in tags) else '+'
+            ftagged = (
+                ('*' if any(not item.startswith('__') for item in tags) else '+')
+                if tags
+                else '-'
+            )
             flags = itertools.chain(fclass, finitialized, ftyped, ftagged)
 
             # If we're within a function, then display the type information if available
@@ -2033,14 +2053,14 @@ class entries(object):
         '''Search through all of the entry points within the database and return the first result matching the keyword specified by `type`.'''
         query_s = utils.string.kwargs(type)
 
-        listable = [item for item in cls.__iterate__(**type)]
+        listable = list(cls.__iterate__(**type))
         if len(listable) > 1:
             messages = ((u"[{:d}] ({:s}) {:#x} : {:s} {:s}".format(idx, '' if ordinal == ea else "#{:d}".format(ordinal), ea, '[FUNC]' if function.within(ea) else '[ADDR]', name or unmangled(ea))) for idx, ordinal, name, ea in map(utils.fmap(utils.fidentity, cls.__entryordinal__, cls.__entryname__, cls.__address__), listable))
             [ logging.info(msg) for msg in messages ]
             f = utils.fcompose(idaapi.get_entry_ordinal, idaapi.get_entry)
             logging.warning(u"{:s}.search({:s}) : Found {:d} matching results, Returning the first entry point at {:#x}.".format('.'.join([__name__, cls.__name__]), query_s, len(listable), f(listable[0])))
 
-        iterable = (item for item in listable)
+        iterable = iter(listable)
         res = builtins.next(iterable, None)
         if res is None:
             raise E.SearchResultsError(u"{:s}.search({:s}) : Found 0 matching results.".format('.'.join([__name__, cls.__name__]), query_s))
@@ -2121,7 +2141,7 @@ def tag(ea):
     # so that we will use a repeatable comment.
     except E.FunctionNotFoundError:
         rt, func = False, None
-    repeatable = False if func and function.within(ea) and not rt else True
+    repeatable = not func or not function.within(ea) or rt
 
     # Read both repeatable and non-repeatable comments from the chosen
     # address so that we can decode both of them into dictionaries to
@@ -2173,7 +2193,7 @@ def tag(ea):
             ti = type(ea)
 
             # Filter the name we're going to render with so that it can be parsed properly.
-            valid = {item for item in string.digits} | {':'}
+            valid = set(string.digits) | {':'}
             filtered = str().join(item if item in valid or idaapi.is_valid_typename(utils.string.to(item)) else '_' for item in realname)
             validname = ''.join(filtered)
 
@@ -2184,8 +2204,6 @@ def tag(ea):
             # Add it to our dictionary that we return to the user.
             res.setdefault('__typeinfo__', ti_s)
 
-    # If we caught an exception, then the name from the type information could be
-    # mangled and so we need to rip the type information directly out of the name.
     except E.InvalidTypeOrValueError:
         demangled = internal.declaration.demangle(aname)
 
@@ -2249,7 +2267,7 @@ def tag(ea, key, value):
 
     # If we're outside a function or pointing to a runtime-linked address, then
     # we use a repeatable comment. Anything else means a non-repeatable comment.
-    repeatable = False if func and function.within(ea) and not rt else True
+    repeatable = not func or not function.within(ea) or rt
 
     # Go ahead and decode the tags that are written to all 3 comment types. This
     # way we can search them for the correct one that the user is trying to modify.
@@ -2283,7 +2301,14 @@ def tag(ea, key, value):
     # Now we can finally update the comment in the database. However, we need
     # to guard the modification so that the hooks don't interfere with the
     # references that we updated. We guard this situation by disabling the hooks.
-    hooks = {'changing_cmt', 'cmt_changed', 'changing_range_cmt', 'range_cmt_changed', 'changing_area_cmt', 'area_cmt_changed'} & {target for target in ui.hook.idb}
+    hooks = {
+        'changing_cmt',
+        'cmt_changed',
+        'changing_range_cmt',
+        'range_cmt_changed',
+        'changing_area_cmt',
+        'area_cmt_changed',
+    } & set(ui.hook.idb)
     try:
         [ ui.hook.idb.disable(item) for item in hooks ]
 

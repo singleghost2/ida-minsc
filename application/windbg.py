@@ -31,12 +31,12 @@ def label(ea):
     except: res = '+{:x}'.format(db.offset(ea))
     return '{:s}!{:s}'.format(db.module(), res)
 
-def tokenize(input, escapables={"'", '"', '\\'} | {item for item in string.whitespace} - {' '}):
+def tokenize(input, escapables={"'", '"', '\\'} | set(string.whitespace) - {' '}):
     """Yield each token belonging to the windbg format in `input` that would need to be escaped using the specified `escapables`.
 
     If the set `escapables` is defined, then use it as the list of characters to tokenize.
     """
-    result, iterable = '', (item for item in input)
+    result, iterable = '', iter(input)
     try:
         while True:
             char = builtins.next(iterable)

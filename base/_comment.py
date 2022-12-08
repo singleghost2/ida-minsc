@@ -80,7 +80,7 @@ class node(dict):
 
 class trie(node):
     def assign(self, symbols, value):
-        res = [item for item in symbols]
+        res = list(symbols)
         head = res.pop(0)
         symbols = tuple(res)
 
@@ -267,16 +267,15 @@ if sys.version_info.major < 3:
         def _unescape(cls, iterable):
             '''Invert the utils.character.unescape coroutine into a generator.'''
             state = internal.interface.collect_t(list, lambda agg, ch: agg + [ch])
-            unescape = internal.utils.character.unescape(state); next(unescape)
+            unescape = internal.utils.character.unescape(state)
+            next(unescape)
 
             # iterate through each character in the string
             for ch in iterable:
                 unescape.send(ch)
 
                 # iterate through the results and yield them to the caller
-                for ch in state.get():
-                    yield ch
-
+                yield from state.get()
                 # now we can start over
                 state.reset()
             return
@@ -285,16 +284,15 @@ if sys.version_info.major < 3:
         def _escape(cls, iterable):
             '''Invert the utils.character.escape coroutine into a generator.'''
             state = internal.interface.collect_t(list, lambda agg, ch: agg + [ch])
-            escape = internal.utils.character.escape(state); next(escape)
+            escape = internal.utils.character.escape(state)
+            next(escape)
 
             # iterate through each character in the string
             for ch in iterable:
                 escape.send(ch)
 
                 # iterate through the results and yield them to the caller
-                for ch in state.get():
-                    yield ch
-
+                yield from state.get()
                 # empty our state and start over
                 state.reset()
             return
@@ -302,12 +300,12 @@ if sys.version_info.major < 3:
         @classmethod
         def decode(cls, data):
             res = data if isinstance(data, unicode) else data.decode('utf8')
-            iterable = (ch for ch in res.lstrip())
+            iterable = iter(res.lstrip())
             return unicode().join(cls._unescape(iterable))
 
         @classmethod
         def encode(cls, instance):
-            iterable = (item for item in instance)
+            iterable = iter(instance)
             res = cls._escape(iterable)
             return unicode().join(res)
 
@@ -357,16 +355,15 @@ else:
         def _unescape(cls, iterable):
             '''Invert the utils.character.unescape coroutine into a generator.'''
             state = internal.interface.collect_t(list, lambda agg, ch: agg + [ch])
-            unescape = internal.utils.character.unescape(state); next(unescape)
+            unescape = internal.utils.character.unescape(state)
+            next(unescape)
 
             # iterate through each character in the string
             for ch in iterable:
                 unescape.send(ch)
 
                 # iterate through the results and yield them to the caller
-                for ch in state.get():
-                    yield ch
-
+                yield from state.get()
                 # now we can start over
                 state.reset()
             return
@@ -375,16 +372,15 @@ else:
         def _escape(cls, iterable):
             '''Invert the utils.character.escape coroutine into a generator.'''
             state = internal.interface.collect_t(list, lambda agg, ch: agg + [ch])
-            escape = internal.utils.character.escape(state); next(escape)
+            escape = internal.utils.character.escape(state)
+            next(escape)
 
             # iterate through each character in the string
             for ch in iterable:
                 escape.send(ch)
 
                 # iterate through the results and yield them to the caller
-                for ch in state.get():
-                    yield ch
-
+                yield from state.get()
                 # empty our state and start over
                 state.reset()
             return
@@ -641,7 +637,7 @@ def decode(data, default=u''):
     # into our result dictionary.
     result = {}
     for line in data.split(u'\n'):
-        iterable = (ch for ch in line)
+        iterable = iter(line)
 
         # try and decode the key and the value from the line
         try:
@@ -835,14 +831,12 @@ class contents(tagging):
                 items = [owner] if count else []
                 iterable = (ea for ea, _ in items)
 
-            # Now we can grab the first parent address, and continue looping
-            # while saving each parent that we get into our result list.
             else:
                 items = [iterator.parent()]
                 while iterator.next():
                     ea = iterator.parent()
                     items.append(ea)
-                iterable = (ea for ea in items)
+                iterable = iter(items)
 
             # Last thing to do is to figure out whether we return a list,
             # a single address, or None if we didn't find anything.
@@ -1024,7 +1018,7 @@ class contents(tagging):
             raise internal.exceptions.DisassemblerError(u"{:s}._write({!r}, {:#x}, {!s}) : Unable to write the contents for address {:#x} to the blob cache ({!s}) associated with the key {:#x}.".format('.'.join([__name__, cls.__name__]), target, ea, internal.utils.string.repr(value), ea, cls.btag, key))
 
         # update sup cache with keys
-        res = {item for item in value.keys()}
+        res = set(value.keys())
         ok = cls._write_header(target, ea, res)
         if not ok:
             raise internal.exceptions.DisassemblerError(u"{:s}._write({!r}, {:#x}, {!s}) : Unable to write the cache header for address {:#x} associated with the key {:#x}.".format('.'.join([__name__, cls.__name__]), target, ea, internal.utils.string.repr(value), ea, key))
@@ -1131,10 +1125,10 @@ class contents(tagging):
 
         If `target` is undefined or ``None`` then use `address` to locate the function.
         """
-        key = target.get('target', None)
+        key = target.get('target')
         res = cls._read(key, address) or {}
         res = res.get(cls.__tags__, {})
-        return {item for item in res.keys()}
+        return set(res.keys())
 
     @classmethod
     def counts(cls, address, **target):
@@ -1142,10 +1136,9 @@ class contents(tagging):
 
         If `target` is undefined or ``None`` then use `address` to locate the function.
         """
-        key = target.get('target', None)
+        key = target.get('target')
         items = cls._read(key, address) or {}
-        for tag, count in items.get(cls.__tags__, {}).items():
-            yield tag, count
+        yield from items.get(cls.__tags__, {}).items()
         return
 
     @classmethod
@@ -1154,7 +1147,7 @@ class contents(tagging):
 
         If `target` is undefined or ``None`` then use `address` to locate the function.
         """
-        key = target.get('target', None)
+        key = target.get('target')
         res = cls._read(key, address) or {}
         res = res.get(cls.__address__, {})
         return sorted(res.keys())
@@ -1165,7 +1158,7 @@ class contents(tagging):
 
         If `target` is undefined or ``None`` then use `address` to locate the function.
         """
-        key = target.get('target', None)
+        key = target.get('target')
         state = cls._read(key, address) or {}
 
         res = state.get(cls.__tags__, {})
@@ -1180,8 +1173,7 @@ class contents(tagging):
             state.pop(cls.__tags__, None)
 
         try:
-            ok = cls._write(key, address, state)
-            if ok:
+            if ok := cls._write(key, address, state):
                 return state
         except Exception as E:
             logging.warning(u"{:s}.set_name({:#x}, {!r}, {:d}{:s}) : An exception {!r} was raised while trying to update the name cache for address {:#x}.".format('.'.join([__name__, cls.__name__]), address, name, count, ', {:s}'.format(internal.utils.string.kwargs(target)) if target else '', E, address), exc_info=True)
@@ -1193,7 +1185,7 @@ class contents(tagging):
 
         If `target` is undefined or ``None`` then use `address` to locate the function.
         """
-        key = target.get('target', None)
+        key = target.get('target')
         state = cls._read(key, address) or {}
 
         res = state.get(cls.__address__, {})
@@ -1208,8 +1200,7 @@ class contents(tagging):
             state.pop(cls.__address__, None)
 
         try:
-            ok = cls._write(key, address, state)
-            if ok:
+            if ok := cls._write(key, address, state):
                 return state
         except Exception as E:
             logging.warning(u"{:s}.set_address({:#x}, {:d}{:s}) : An exception {!r} was raised while trying to update the cache for address {:#x}.".format('.'.join([__name__, cls.__name__]), address, count, ', {:s}'.format(internal.utils.string.kwargs(target)) if target else '', E, address), exc_info=True)
@@ -1274,7 +1265,7 @@ class globals(tagging):
     @classmethod
     def address(cls):
         '''Return all the tag addresses (``sorted``) in the specified database (globals and func-tags)'''
-        return sorted(ea for ea in internal.netnode.alt.fiter(tagging.node()))
+        return sorted(iter(internal.netnode.alt.fiter(tagging.node())))
 
     @classmethod
     def set_name(cls, name, count):
@@ -1296,8 +1287,7 @@ class globals(tagging):
     def iterate(cls):
         '''Yield the address and count for each of the globals in the database according to what is written in the altvals.'''
         node = tagging.node()
-        for ea, count in internal.netnode.alt.fitems(node):
-            yield ea, count
+        yield from internal.netnode.alt.fitems(node)
         return
 
     @classmethod

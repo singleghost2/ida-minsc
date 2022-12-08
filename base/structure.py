@@ -95,10 +95,10 @@ def iterate(string, *suffix):
 def iterate(**type):
     '''Iterate through all of the structures that match the keyword specified by `type`.'''
     if not type: type = {'predicate': lambda item: True}
-    listable = [item for item in __iterate__()]
+    listable = list(__iterate__())
     for key, value in type.items():
-        listable = [item for item in __matcher__.match(key, value, listable)]
-    for item in listable: yield item
+        listable = list(__matcher__.match(key, value, listable))
+    yield from listable
 
 @utils.multicase(string=six.string_types)
 @utils.string.decorate_arguments('string', 'suffix')
@@ -110,7 +110,7 @@ def list(string, *suffix):
 @utils.string.decorate_arguments('regex', 'like', 'name')
 def list(**type):
     '''List all the structures within the database that match the keyword specified by `type`.'''
-    res = [item for item in iterate(**type)]
+    res = list(iterate(**type))
 
     maxindex = max(builtins.map(utils.fcompose(operator.attrgetter('index'), "{:d}".format, len), res) if res else [1])
     maxname = max(builtins.map(utils.fcompose(operator.attrgetter('name'), utils.fdefault(''), len), res) if res else [1])
@@ -124,8 +124,8 @@ def list(**type):
 @utils.string.decorate_arguments('And', 'Or')
 def select(tag, *And, **boolean):
     '''Query all of the structure tags for the specified `tag` and any others specified as `And`.'''
-    res = {tag} | {item for item in And}
-    boolean['And'] = {item for item in boolean.get('And', [])} | res
+    res = {tag} | set(And)
+    boolean['And'] = set(boolean.get('And', [])) | res
     return select(**boolean)
 @utils.multicase()
 @utils.string.decorate_arguments('And', 'Or')
@@ -136,23 +136,22 @@ def select(**boolean):
     If `Or` contains an iterable then include any other tags that are specified.
     """
     containers = (builtins.tuple, builtins.set, builtins.list)
-    boolean = {key : {item for item in value} if isinstance(value, containers) else {value} for key, value in boolean.items()}
+    boolean = {
+        key: set(value) if isinstance(value, containers) else {value}
+        for key, value in boolean.items()
+    }
 
     # User is not asking for anything specifically, so just yield all the
     # structures that are available.
     if not boolean:
         for st in __iterate__():
-            content = st.tag()
-
-            # If we have any content, then the structure and its content
-            # can be yielded to the user.
-            if content:
+            if content := st.tag():
                 yield st, content
             continue
         return
 
     # Collect the tags we're supposed to look for in the typical lame way.
-    Or, And = ({item for item in boolean.get(B, [])} for B in ['Or', 'And'])
+    Or, And = (set(boolean.get(B, [])) for B in ['Or', 'And'])
 
     # Now we slowly iterate through our structures looking for matches,
     # while ensuring that we pop off any typeinfo since its not relevant.
@@ -160,12 +159,12 @@ def select(**boolean):
         collected, content = {}, st.tag()
 
         # Simply collect all tagnames being queried with Or(|).
-        collected.update({key : value for key, value in content.items() if key in Or})
+        collected |= {key : value for key, value in content.items() if key in Or}
 
         # And(&) is a little more specific...
         if And:
             if And & six.viewkeys(content) == And:
-                collected.update({key : value for key, value in content.items() if key in And})
+                collected |= {key : value for key, value in content.items() if key in And}
             else: continue
 
         # That's all folks. Yield it if you got it.
@@ -301,7 +300,11 @@ class structure_t(object):
         # it to distinguish local types and ghost types (which always have a name).
         excluded = ['SF_FRAME', 'SF_NOLIST']
         name = utils.string.of(idaapi.get_struc_name(sptr.id))
-        if name and not any([sptr.props & getattr(idaapi, attribute) for attribute in excluded if hasattr(idaapi, attribute)]):
+        if name and not any(
+            sptr.props & getattr(idaapi, attribute)
+            for attribute in excluded
+            if hasattr(idaapi, attribute)
+        ):
             res.setdefault('__name__', name)
 
         # Now we need to do the '__typeinfo__' tag. This is going to be a little
@@ -311,14 +314,11 @@ class structure_t(object):
         # (SF_TYPLIB), from the local types (SF_GHOST), or the user chose not to
         # list it (SF_NOLIST), then we don't assign '__typeinfo__'.
         excluded = ['SF_FRAME', 'SF_GHOST', 'SF_TYPLIB', 'SF_NOLIST']
-        if any([sptr.props & getattr(idaapi, attribute) for attribute in excluded if hasattr(idaapi, attribute)]):
-            pass
-
-        # SF_NOLIST is justified because if the user didn't want the structure to
-        # be listed, then we're just doing as we're told. Everything else should
-        # be justifiable because if the user did anything with the type, then
-        # the other flags should've been cleared.
-        else:
+        if not any(
+            sptr.props & getattr(idaapi, attribute)
+            for attribute in excluded
+            if hasattr(idaapi, attribute)
+        ):
             ti = self.typeinfo
             ti_s = idaapi.print_tinfo('', 0, 0, 0, ti, '', '')
             res.setdefault('__typeinfo__', ti_s)
@@ -439,7 +439,7 @@ class structure_t(object):
         # First collect all of our identifiers referenced by this structure,
         # whilst making sure to include all the members too.
         iterable = itertools.chain([self.id], map(Fnetnode, map(operator.attrgetter('id'), self.members)))
-        items = [identifier for identifier in iterable]
+        items = list(iterable)
 
         # Now we need to iterate through all of our members and grab references
         # to those identifiers too.
@@ -460,7 +460,7 @@ class structure_t(object):
         # That should've given us absolutely every reference related to this
         # structure, so the last thing to do is to filter our list for references
         # to addresses within the database.
-        results, matches = {item for item in []}, {identifier for identifier in items}
+        results, matches = set([]), set(items)
         for xrfrom, xriscode, xrtype in refs:
 
             # If the reference is an identifier, then it's not what we're looking
@@ -475,7 +475,7 @@ class structure_t(object):
                 # Iterate through all of its operands and only care about the
                 # ones that have operand information for it. We also keep track
                 # of any operands that have a refinfo_t so we can add those too.
-                references = {item for item in []}
+                references = set([])
                 for opnum, _ in enumerate(instruction.operands(xrfrom)):
 
                     # Collect the operand information into a proper path in case
@@ -490,7 +490,7 @@ class structure_t(object):
                         # Now we need to convert these pairs into a set so that we can
                         # test their membership.
                         iterable = itertools.chain(*(map(operator.attrgetter('id'), pair) for pair in members))
-                        candidates = {identifier for identifier in iterable}
+                        candidates = set(iterable)
 
                         # Verify that one of our ids is contained within it.
                         if candidates & matches:
@@ -502,7 +502,7 @@ class structure_t(object):
                     # Otherwise this is likely a refinfo, and we need to follow
                     # the reference in order to grab _all_ of its references.
                     drefs = [ea for ea in database.xref.down(xrfrom) if not interface.node.is_identifier(ea)]
-                    references |= {ea for ea in itertools.chain(*map(database.xref.up, drefs))}
+                    references |= set(itertools.chain(*map(database.xref.up, drefs)))
 
                 # Last thing to do is to add the references that we collected while
                 # searching through the operands.
@@ -526,9 +526,6 @@ class structure_t(object):
                         continue
                     continue
 
-            # Anything else is data which doesn't have an operand associated with
-            # it, so we can just use the regular ref_t for this case. We use '*'
-            # for the reference type since this is being applied to an address.
             else:
                 item = interface.ref_t(xrfrom, None, interface.reftype_t.of_action('*'))
                 results.add(item)
@@ -905,7 +902,9 @@ class structure_t(object):
             cls = self.__class__
             logging.info(u"{:s}({:#x}) : Creating structure \"{:s}\" with {:d} fields and the comment \"{:s}\".".format('.'.join([__name__, cls.__name__]), self.id, utils.string.escape(name, '"'), len(members), utils.string.escape(cmtf or cmtt or '', '"')))
             res = utils.string.to(name)
-            identifier = idaapi.add_struc(idaapi.BADADDR, res, True if props & idaapi.SF_UNION else False)
+            identifier = idaapi.add_struc(
+                idaapi.BADADDR, res, bool(props & idaapi.SF_UNION)
+            )
 
         # now we can apply the comments to it
         idaapi.set_struc_cmt(identifier, utils.string.to(cmtt), True)
@@ -913,15 +912,14 @@ class structure_t(object):
 
         # set its individual properties (ignoring SF_FRAME and SF_GHOST of course)
         sptr = idaapi.get_struc(identifier)
-        idaapi.set_struc_listed(sptr, False if props & idaapi.SF_NOLIST else True)
-        idaapi.set_struc_hidden(sptr, True if props & idaapi.SF_HIDDEN else False)
+        idaapi.set_struc_listed(sptr, not props & idaapi.SF_NOLIST)
+        idaapi.set_struc_hidden(sptr, bool(props & idaapi.SF_HIDDEN))
         idaapi.set_struc_align(sptr, (props & idaapi.SF_ALIGN) >> 7)
 
         # we don't really bother with changing the index, because we
         # want to be able to preserve the order when they're added.
-        if False and 0 <= idx < idaapi.get_struc_qty():
-            if idaapi.get_struc_by_idx(idx) == idaapi.BADADDR:
-                idaapi.set_struc_idx(sptr, idx)
+        if False and idaapi.get_struc_by_idx(idx) == idaapi.BADADDR:
+            idaapi.set_struc_idx(sptr, idx)
 
         # and set its attributes properly
         self.__ptr__, self.__name__ = idaapi.get_struc(sptr.id), name
@@ -932,7 +930,7 @@ class structure_t(object):
 @utils.multicase(id=six.integer_types)
 def has(id):
     '''Return whether a structure with the specified `id` exists within the database.'''
-    return True if interface.node.is_identifier(id) and idaapi.get_struc(id) else False
+    return bool(interface.node.is_identifier(id) and idaapi.get_struc(id))
 @utils.multicase(name=six.string_types)
 @utils.string.decorate_arguments('name', 'suffix')
 def has(name, *suffix):
@@ -1001,13 +999,16 @@ def by(**type):
     '''Return the structure matching the keyword specified by `type`.'''
     searchstring = utils.string.kwargs(type)
 
-    listable = [item for item in iterate(**type)]
+    listable = list(iterate(**type))
     if len(listable) > 1:
-        messages = ((u"[{:d}] {:s}".format(idaapi.get_struc_idx(st.id), st.name)) for i, st in enumerate(listable))
+        messages = (
+            (u"[{:d}] {:s}".format(idaapi.get_struc_idx(st.id), st.name))
+            for st in listable
+        )
         [ logging.info(msg) for msg in messages ]
         logging.warning(u"{:s}.search({:s}) : Found {:d} matching results, returning the first one {!s}.".format(__name__, searchstring, len(listable), listable[0]))
 
-    iterable = (item for item in listable)
+    iterable = iter(listable)
     res = next(iterable, None)
     if res is None:
         raise E.SearchResultsError(u"{:s}.search({:s}) : Found 0 matching results.".format(__name__, searchstring))
@@ -1109,8 +1110,7 @@ def size(id):
 @utils.multicase(id=six.integer_types)
 def is_union(id):
     '''Return whether the structure identified by `id` is a union or not.'''
-    sptr = idaapi.get_struc(id)
-    if sptr:
+    if sptr := idaapi.get_struc(id):
         return is_union(sptr)
     raise E.StructureNotFoundError(u"{:s}.is_union({:#x}) : Unable to find the requested structure ({:#x}).".format(__name__, id, id))
 @utils.multicase(structure=(idaapi.struc_t, structure_t))
@@ -1118,7 +1118,7 @@ def is_union(structure):
     '''Return whether the provided `structure` is defined as a union.'''
     SF_UNION = getattr(idaapi, 'SF_UNION', 0x2)
     sptr = structure if isinstance(structure, idaapi.struc_t) else structure.ptr
-    return True if sptr.props & SF_UNION else False
+    return bool(sptr.props & SF_UNION)
 unionQ = isunion = utils.alias(is_union)
 
 @utils.multicase(id=six.integer_types)
@@ -1131,7 +1131,7 @@ def is_frame(structure):
     '''Return whether the provided `structure` is a frame or not.'''
     SF_FRAME = getattr(idaapi, 'SF_FRAME', 0x40)
     sptr = structure if isinstance(structure, idaapi.struc_t) else structure.ptr
-    return True if sptr.props & SF_FRAME else False
+    return bool(sptr.props & SF_FRAME)
 frameQ = isframe = utils.alias(is_frame)
 
 @utils.multicase()
@@ -1301,10 +1301,10 @@ class members_t(object):
     def iterate(self, **type):
         '''Iterate through all of the members in the structure that match the keyword specified by `type`.'''
         if not type: type = {'predicate': lambda item: True}
-        listable = [item for item in self.__iterate__()]
+        listable = list(self.__iterate__())
         for key, value in type.items():
-            listable = [item for item in self.__members_matcher.match(key, value, listable)]
-        for item in listable: yield item
+            listable = list(self.__members_matcher.match(key, value, listable))
+        yield from listable
     @utils.multicase(string=six.string_types)
     @utils.string.decorate_arguments('string', 'suffix')
     def iterate(self, string, *suffix):
@@ -1342,14 +1342,14 @@ class members_t(object):
         searchstring = utils.string.kwargs(type)
         owner = self.owner
 
-        listable = [item for item in self.iterate(**type)]
+        listable = list(self.iterate(**type))
         if len(listable) > 1:
             cls = self.__class__
             messages = ((u"[{:d}] {:x}{:+#x} {:s} '{:s}' {!r}".format(m.index, m.offset, m.size, "{!s}".format(m.typeinfo.dstr()).replace(' *', '*'), utils.string.escape(m.name, '\''), utils.string.repr(m.type))) for m in listable)
             [ logging.info(msg) for msg in messages ]
             logging.warning(u"{:s}({:#x}).members.by({:s}) : Found {:d} matching results. Returning the member at index {:d} offset {:x}{:+#x} with the name \"{:s}\" and typeinfo \"{:s}\".".format('.'.join([__name__, cls.__name__]), owner.ptr.id, searchstring, len(listable), listable[0].index, listable[0].offset, listable[0].size, utils.string.escape(listable[0].fullname, '"'), utils.string.escape("{!s}".format(listable[0].typeinfo.dstr()).replace(' *', '*'), '"')))
 
-        iterable = (item for item in listable)
+        iterable = iter(listable)
         res = next(iterable, None)
         if res is None:
             cls = self.__class__
@@ -1626,7 +1626,7 @@ class members_t(object):
 
         # Grab all of the members at the specified offset so we can determine
         # if there's an exact member that can be found.
-        members = [mptr for mptr in self.__members_at__(offset)]
+        members = list(self.__members_at__(offset))
 
         # If we found more than one member, then try and filter the exact one
         # using the members_t.by_realoffset method.
@@ -1763,7 +1763,13 @@ class members_t(object):
     @utils.multicase()
     def remove(self, offset):
         '''Remove the member at `offset` from the structure.'''
-        cls, owner, items = self.__class__, self.owner, [mptr for mptr in self.__members_at__(offset - self.baseoffset)] if offset >= self.baseoffset else []
+        cls, owner, items = (
+            self.__class__,
+            self.owner,
+            list(self.__members_at__(offset - self.baseoffset))
+            if offset >= self.baseoffset
+            else [],
+        )
 
         # If there are no items at the requested offset, then we bail.
         if not items:
@@ -1869,7 +1875,9 @@ class members_t(object):
 
         # Otherwise, we only removed some of the elements and we need to
         # figure out what happened so we can let the user know.
-        removed, expected = {id for id in []}, {id : (name, type, location) for id, name, type, location in result}
+        removed, expected = set([]), {
+            id: (name, type, location) for id, name, type, location in result
+        }
         for id, name, _, location in result:
             moffset, _ = location
             if idaapi.get_member(sptr, moffset - self.baseoffset):
@@ -1910,8 +1918,7 @@ class members_t(object):
         # seems to figure everything out for us and so we can just use it to
         # fetch the things we need to yield, and then return immediately after.
         if not is_union(owner.ptr):
-            mptr = idaapi.get_member(owner.ptr, realoffset)
-            if mptr:
+            if mptr := idaapi.get_member(owner.ptr, realoffset):
                 yield mptr
             return
 
@@ -2035,7 +2042,7 @@ class members_t(object):
             if sptr:
                 st = __instance__(sptr.id, offset=self.baseoffset + moffset + res)
                 suffix, nextoffset = st.members.__walk_to_realoffset__(bytes, filter=filter)
-                return prefix + [item for item in suffix], offset - (moffset + res + bytes - nextoffset)
+                return prefix + list(suffix), offset - (moffset + res + bytes - nextoffset)
 
             # We have no idea what type this is, so just bail.
             raise TypeError(mptr, item)
@@ -2102,8 +2109,8 @@ class members_t(object):
     @utils.string.decorate_arguments('And', 'Or')
     def select(self, tag, *And, **boolean):
         '''Query all of the members for the specified `tag` and any others specified as `And`.'''
-        res = {tag} | {item for item in And}
-        boolean['And'] = {item for item in boolean.get('And', [])} | res
+        res = {tag} | set(And)
+        boolean['And'] = set(boolean.get('And', [])) | res
         return self.select(**boolean)
     @utils.multicase()
     @utils.string.decorate_arguments('And', 'Or')
@@ -2114,21 +2121,23 @@ class members_t(object):
         If `Or` contains an iterable then include any other tags that are specified.
         """
         containers = (builtins.tuple, builtins.set, builtins.list)
-        boolean = {key : {item for item in value} if isinstance(value, containers) else {value} for key, value in boolean.items()}
+        boolean = {
+            key: set(value) if isinstance(value, containers) else {value}
+            for key, value in boolean.items()
+        }
 
         # For some reason the user wants to iterate through everything, so
         # we'll try and do as we're told but only if they have tags.
         if not boolean:
             for m in self.__iterate__():
-                content = m.tag()
-                if content:
+                if content := m.tag():
                     yield m, content
                 continue
             return
 
         # Do the same thing we've always done to consoldate our parameters
         # into a form that we can do basic set arithmetic with.
-        Or, And = ({item for item in boolean.get(B, [])} for B in ['Or', 'And'])
+        Or, And = (set(boolean.get(B, [])) for B in ['Or', 'And'])
 
         # All that's left to do is to slowly iterate through all of our
         # members while looking for the matches requested by the user.
@@ -2136,12 +2145,12 @@ class members_t(object):
             collected, content = {}, m.tag()
 
             # Start out by collecting any tagnames specified by Or(|).
-            collected.update({key : value for key, value in content.items() if key in Or})
+            collected |= {key : value for key, value in content.items() if key in Or}
 
             # Then we need to include any specific tags that come from And(&).
             if And:
                 if And & six.viewkeys(content) == And:
-                    collected.update({key : value for key, value in content.items() if key in And})
+                    collected |= {key : value for key, value in content.items() if key in And}
                 else: continue
 
             # Easy to do and easy to yield.
@@ -2261,7 +2270,9 @@ class members_t(object):
         if identifier == idaapi.BADADDR:
             cls = self.__class__
             logging.info(u"{:s}({:#x}) : Creating `members_t` for `structure_t` \"{:s}\" with no members.".format('.'.join([__name__, cls.__name__]), identifier, utils.string.escape(ownername, '"')))
-            identifier = idaapi.add_struc(idaapi.BADADDR, res, True if sprops & idaapi.SF_UNION else False)
+            identifier = idaapi.add_struc(
+                idaapi.BADADDR, res, bool(sprops & idaapi.SF_UNION)
+            )
 
         # assign the properties for our new member using the instance we figured out
         self.baseoffset = baseoffset
@@ -2308,12 +2319,21 @@ class member_t(object):
 
         # the format of the implicit tags depend on the type of the member, which
         # we actually extract from a combination of the name, and is_special_member.
-        specialQ = True if idaapi.is_special_member(self.id) else False
+        specialQ = bool(idaapi.is_special_member(self.id))
 
         # now we need to check the name via is_dummy_member_name, and explicitly
         # check to see if the name begins with field_ so that we don't use it if so.
         idaname = idaapi.get_member_name(self.id) or ''
-        anonymousQ = True if any(F(idaname) for F in [idaapi.is_dummy_member_name, idaapi.is_anonymous_member_name, operator.methodcaller('startswith', 'field_')]) else False
+        anonymousQ = any(
+            (
+                F(idaname)
+                for F in [
+                    idaapi.is_dummy_member_name,
+                    idaapi.is_anonymous_member_name,
+                    operator.methodcaller('startswith', 'field_'),
+                ]
+            )
+        )
         name = utils.string.of(idaname)
 
         # if the name is defined and not special in any way, then its a tag.
