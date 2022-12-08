@@ -35,9 +35,9 @@ def map(F, **kwargs):
     f = f1 if internal.utils.pycompat.code.argcount(Fc) == 1 else f2
 
     result, all = [], database.functions()
-    total = len(all)
     if len(all):
-        ea = next(item for item in all)
+        ea = next(iter(all))
+        total = len(all)
         try:
             for i, ea in enumerate(all):
                 ui.navigation.set(ea)
@@ -92,7 +92,7 @@ def colormarks(color=0x7f007f):
     address of the marks that it contains.
     """
     # tag and color
-    f = {item for item in []}
+    f = set([])
     for ea, m in database.marks():
         database.tag(ea, 'mark', m)
         if database.color(ea) is None:
@@ -118,7 +118,13 @@ def recovermarks():
     # collect
     result = []
     for fn, l in database.select('marks'):
-        m = {item for item in l['marks']} if hasattr(l['marks'], '__iter__') else {int(item, 16) for item in l['marks'].split(',')} if isinstance(l['marks'], six.string_types) else {l['marks']}
+        m = (
+            set(l['marks'])
+            if hasattr(l['marks'], '__iter__')
+            else {int(item, 16) for item in l['marks'].split(',')}
+            if isinstance(l['marks'], six.string_types)
+            else {l['marks']}
+        )
         res = [(ea, d['mark']) for ea, d in func.select(fn, 'mark')]
         if m != { ea for ea, _ in res }:
             logging.warning("{:s} : Ignoring the function tag \"{:s}\" for function {:#x} due to its value being out-of-sync with the contents values ({!s} <> {!s}).".format('.'.join([__name__, 'recovermarks']), fn, builtins.map("{:#x}".format, m), builtins.map("{:#x}".format, {ea for ea, _ in res})))
@@ -126,8 +132,8 @@ def recovermarks():
     result.sort(key=lambda item: item[1])
 
     # discovered marks versus database marks
-    result = {ea : item for ea, item in result.items()}
-    current = {ea : descr for ea, descr in database.marks()}
+    result = dict(result.items())
+    current = dict(database.marks())
 
     # create tags
     for x, y in result.items():
@@ -135,17 +141,11 @@ def recovermarks():
             logging.warning("{:#x}: skipping already existing mark : {!r}".format(x, current[x]))
             continue
 
-        # x not in current
-        if x not in current:
-            logging.info("{:#x}: adding missing mark due to tag : {!r}".format(x, result[x]))
-        elif current[x] != result[x]:
-            logging.info("{:#x}: database tag is different than mark description : {!r}".format(x, result[x]))
-        else:
-            assert current[x] == result[x]
+        logging.info("{:#x}: adding missing mark due to tag : {!r}".format(x, result[x]))
         database.mark(x, y)
 
     # marks that aren't reachable in the database
-    for ea in { item for item in current.keys() }.difference({item for item in result.keys()}):
+    for ea in set(current.keys()).difference(set(result.keys())):
         logging.warning("{:#x}: unreachable mark (global) : {!r}".format(ea, current[ea]))
 
     # color them
@@ -194,18 +194,18 @@ def collect(ea, sentinel):
     reached.
     """
     if isinstance(sentinel, (list, tuple)):
-        sentinel = {item for item in sentinel}
+        sentinel = set(sentinel)
     if not all((sentinel, isinstance(sentinel, set))):
         raise AssertionError("{:s}.collect({:#x}, {!r}) : Sentinel is empty or not a set.".format(__name__, ea, sentinel))
     def _collect(addr, result):
-        process = {item for item in []}
+        process = set([])
         for blk in builtins.map(func.block, func.block.after(addr)):
-            if any(blk in coll for coll in [result, sentinel]):
-                continue
-            process.add(blk)
+            if all(blk not in coll for coll in [result, sentinel]):
+                process.add(blk)
         for addr, _ in process:
             result |= _collect(addr, result | process)
         return result
+
     addr, _ = blk = func.block(ea)
     return _collect(addr, {blk})
 
@@ -217,11 +217,11 @@ def collectcall(ea, sentinel=set()):
     functions are reached.
     """
     if isinstance(sentinel, (list, tuple)):
-        sentinel = {item for item in sentinel}
+        sentinel = set(sentinel)
     if not isinstance(sentinel, set):
         raise AssertionError("{:s}.collectcall({:#x}, {!r}) : Sentinel is not a set.".format(__name__, ea, sentinel))
     def _collectcall(addr, result):
-        process = {item for item in []}
+        process = set([])
         for f in func.down(addr):
             if any(f in coll for coll in [result, sentinel]):
                 continue
@@ -233,6 +233,7 @@ def collectcall(ea, sentinel=set()):
         for addr in process:
             result |= _collectcall(addr, result | process)
         return result
+
     addr = func.top(ea)
     return _collectcall(addr, {addr})
 
@@ -267,7 +268,7 @@ def makecall(ea=None, target=None):
         # scan down until we find a call that references something
         chunk, = ((l, r) for l, r in func.chunks(ea) if l <= ea <= r)
         result = []
-        while (len(result) < 1) and ea < chunk[1]:
+        while not result and ea < chunk[1]:
             # FIXME: it's probably not good to just scan for a call
             if not database.instruction(ea).startswith('call '):
                 ea = database.next(ea)

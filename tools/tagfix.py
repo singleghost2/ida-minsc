@@ -57,7 +57,7 @@ def fetch_globals_functions():
     addresses and tag names for each function from the database.
     """
     address, tags = {}, {}
-    functions = [item for item in db.functions()]
+    functions = list(db.functions())
     for i, ea in enumerate(map(ui.navigation.analyze, functions)):
         items = func.tag(ea)
         six.print_(u"globals: counting the tags assigned to function {:#x} : {:d} of {:d}".format(ea, 1 + i, len(functions)), file=output)
@@ -110,8 +110,8 @@ def fetch_globals():
 
     address, tags = {}, {}
     for results, item in itertools.chain(zip(2 * [address], [faddr, daddr]), zip(2 * [tags], [ftags, dtags])):
-        matching = {ea for ea in results} & {ea for ea in item}
-        missing = {ea for ea in item} - {ea for ea in results}
+        matching = set(results) & set(item)
+        missing = set(item) - set(results)
 
         # Update all of the keys that aren't in both our results
         # and our items, and add up the ones that are.
@@ -168,7 +168,7 @@ def globals():
 
 def all():
     '''Build the index of references for all the globals and generate the caches for every function in the database.'''
-    functions = [item for item in db.functions()]
+    functions = list(db.functions())
 
     # process all function contents tags
     for i, ea in enumerate(functions):
@@ -196,11 +196,10 @@ def extracomments():
     for ea in db.address.iterate(left, right):
         ctx = internal.comment.contents if func.within(ea) else internal.comment.globals
 
-        count = db.extra.__count__(ea, idaapi.E_PREV)
-        if count: [ ctx.inc(ea, '__extra_prefix__') for i in range(count) ]
-
-        count = db.extra.__count__(ea, idaapi.E_NEXT)
-        if count: [ ctx.inc(ea, '__extra_suffix__') for i in range(count) ]
+        if count := db.extra.__count__(ea, idaapi.E_PREV):
+            [ctx.inc(ea, '__extra_prefix__') for _ in range(count)]
+        if count := db.extra.__count__(ea, idaapi.E_NEXT):
+            [ctx.inc(ea, '__extra_suffix__') for _ in range(count)]
     return
 
 def everything():
@@ -212,10 +211,7 @@ def erase_globals():
     '''Remove the contents of the index from the database which is used for storing information about the global tags.'''
     node = internal.comment.tagging.node()
     hashes, alts, sups = map(list, (iterator(node) for iterator in [internal.netnode.hash.fiter, internal.netnode.alt.fiter, internal.netnode.sup.fiter]))
-    total = sum(map(len, [hashes, alts, sups]))
-
-    yield total
-
+    yield sum(map(len, [hashes, alts, sups]))
     current = 0
     for idx, k in enumerate(hashes):
         internal.netnode.hash.remove(node, k)
@@ -234,7 +230,7 @@ def erase_globals():
 
 def erase_contents():
     '''Remove the cache associated with each function from the database.'''
-    functions = [item for item in db.functions()]
+    functions = list(db.functions())
     total, tag = len(functions), internal.comment.contents.btag
     yield total
 
@@ -276,8 +272,8 @@ def verify_index():
             continue
 
         # Verify the keys inside the cache are only ones that we know about.
-        expected = {key for key in [cls.__tags__, cls.__address__]}
-        keys = {key for key in available}
+        expected = {cls.__tags__, cls.__address__}
+        keys = set(available)
         if keys - expected:
             ok, _ = False, six.print_(u"[{:#x}] the index item for this function contains unsupported keys ({:s})".format(ea, ', '.join(sorted(keys - expected))), file=output)
             continue
@@ -305,7 +301,7 @@ def verify_content(ea):
         return False
 
     # Grab the keys from the cache in order to cross-check them.
-    expected, available = {key for key in [cls.__tags__, cls.__address__]}, {key for key in cache}
+    expected, available = {cls.__tags__, cls.__address__}, set(cache)
 
     # Verify that the keys in our cache match what we expect.
     if available - expected:
@@ -340,13 +336,13 @@ def verify_content(ea):
     # tags because we're going to do some quirky things to adjust for them.
     results, implicit = {}, {key : [] for key in ['__typeinfo__', '__name__']}
     for ea in cache[cls.__address__]:
-        items, empty = {key for key in db.tag(ea)}, {item for item in []}
+        items, empty = set(db.tag(ea)), set([])
         for name in items:
             results.setdefault(ea, empty).add(name)
 
         # Find the intersection of our tags with the keys for the implicit
         # tags so that we can remember their addresses and query them later.
-        for name in {key for key in implicit} & items:
+        for name in set(implicit) & items:
             implicit[name].append(ea)
         continue
 
@@ -355,9 +351,12 @@ def verify_content(ea):
     # but when verifying things without having to worry about performance
     # cost I don't think it causes too much pain.
     for key in implicit:
-        items = {item for item in implicit[key]}
+        items = set(implicit[key])
         if len(items) != len(implicit[key]):
-            counts = {ea : len([ea for ea in group]) for ea, group in itertools.groupby(implicit[key])}
+            counts = {
+                ea: len(list(group))
+                for ea, group in itertools.groupby(implicit[key])
+            }
             six.print_(u"[{:#x}] duplicate addresses were discovered for implicit tag {!r} at: {:s}".format(f, key, ', '.join(ea for ea, count in counts if count > 1)), file=output)
         implicit[key] = items
 
@@ -384,7 +383,7 @@ def verify_content(ea):
         address[ea] = count
 
     # First we'll verify the address counts.
-    expected, available = {ea for ea in cache[cls.__address__]}, {ea for ea in address}
+    expected, available = set(cache[cls.__address__]), set(address)
     if expected != available:
         additional, missing = sorted(available - expected), sorted(expected - available)
         six.print_(u"[{:#x}] the address cache for {:#x} is desynchronized and {:s} addresses...".format(f, f, "contains {:d} additional and {:d} missing".format(len(additional), len(missing)) if additional and missing else "is missing {:d}".format(len(missing)) if missing else "has {:d} additional".format(len(additional))), file=output)
@@ -395,7 +394,7 @@ def verify_content(ea):
         return False
 
     # Then we'll verify the tag names.
-    expected, available = {key for key in cache[cls.__tags__]}, {key for key in tags}
+    expected, available = set(cache[cls.__tags__]), set(tags)
     if expected != available:
         additional, missing = sorted(available - expected), sorted(expected - available)
         six.print_(u"[{:#x}] the name cache for {:#x} is desynchronized and {:s} keys...".format(f, f, "contains {:d} additional and {:d} missing".format(len(additional), len(missing)) if additional and missing else "is missing {:d}".format(len(missing)) if missing else "has {:d} additional".format(len(additional))), file=output)
@@ -414,7 +413,7 @@ def verify_content(ea):
         continue
 
     # Now we can compare the address reference counts.
-    expected, available = {ea for ea in cache[cls.__address__]}, {ea for ea in address}
+    expected, available = set(cache[cls.__address__]), set(address)
     for ea in map(ui.navigation.analyze, expected & available):
         count, expected = address[ea], cache[cls.__address__]
 

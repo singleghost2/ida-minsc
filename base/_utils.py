@@ -7,6 +7,7 @@ class for querying and filtering lists of things, support for aliasing
 functions, and a number of functional programming primitives (combinators).
 """
 
+
 import six, builtins
 
 import os, logging, types, weakref
@@ -21,13 +22,25 @@ __all__ = ['fpack','funpack','fcar','fcdr','finstance','fhasitem','fitemQ','fget
 ### functional programming combinators (FIXME: probably better to document these with examples)
 
 # return a closure that executes `F` with the arguments boxed and concatenated.
-fpack = lambda F, *a, **k: lambda *ap, **kp: F(a + ap, **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+fpack = lambda F, *a, **k: lambda *ap, **kp: F(
+    a + ap, **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that executes `F` with all of its arguments concatenated and unboxed.
-funpack = lambda F, *a, **k: lambda *ap, **kp: F(*(a + functools.reduce(operator.add, builtins.map(builtins.tuple, ap), ())), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+funpack = lambda F, *a, **k: lambda *ap, **kp: F(
+    *(
+        a
+        + functools.reduce(operator.add, builtins.map(builtins.tuple, ap), ())
+    ),
+    **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that executes `F` with only its first argument.
-fcar = lambda F, *a, **k: lambda *ap, **kp: F(*(a + ap[:1]), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+fcar = lambda F, *a, **k: lambda *ap, **kp: F(
+    *(a + ap[:1]), **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that executes `F` with all of it arguments but the first.
-fcdr = lambda F, *a, **k: lambda *ap, **kp: F(*(a + ap[1:]), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+fcdr = lambda F, *a, **k: lambda *ap, **kp: F(
+    *(a + ap[1:]), **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that will check that `object` is an instance of `type`.
 finstance = lambda *type: frpartial(builtins.isinstance, type)
 # return a closure that will check if its argument has an item `key`.
@@ -68,18 +81,34 @@ def flazy(F, *a, **k):
     sortedtuple, state = fcompose(builtins.sorted, builtins.tuple), {}
     def lazy(*ap, **kp):
         A, K = a + ap, sortedtuple(builtins.tuple(k.items()) + builtins.tuple(kp.items()))
-        return state[(A, K)] if (A, K) in state else state.setdefault((A, K), F(*A, **{ key : value for key, value in itertools.chain(k.items(), kp.items()) }))
+        return (
+            state[(A, K)]
+            if (A, K) in state
+            else state.setdefault(
+                (A, K), F(*A, **dict(itertools.chain(k.items(), kp.items())))
+            )
+        )
+
     return lazy
 # return a closure with the function's arglist partially applied
 fpartial = functools.partial
 # return a closure that applies the provided arguments to the function `F`.
-fapply = lambda F, *a, **k: lambda *ap, **kp: F(*(a + ap), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+fapply = lambda F, *a, **k: lambda *ap, **kp: F(
+    *(a + ap), **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that will use the specified arguments to call the provided function.
-fcurry = lambda *a, **k: lambda F, *ap, **kp: F(*(a + ap), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+fcurry = lambda *a, **k: lambda F, *ap, **kp: F(
+    *(a + ap), **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that applies the initial arglist to the end of function `F`.
-frpartial = lambda F, *a, **k: lambda *ap, **kp: F(*(ap + builtins.tuple(builtins.reversed(a))), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+frpartial = lambda F, *a, **k: lambda *ap, **kp: F(
+    *(ap + builtins.tuple(builtins.reversed(a))),
+    **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that applies the arglist to function `F` in reverse.
-freverse = lambda F, *a, **k: lambda *ap, **kp: F(*builtins.reversed(a + ap), **{ key : value for key, value in itertools.chain(k.items(), kp.items()) })
+freverse = lambda F, *a, **k: lambda *ap, **kp: F(
+    *builtins.reversed(a + ap), **dict(itertools.chain(k.items(), kp.items()))
+)
 # return a closure that executes function `F` and includes the caught exception (or None) as the first element in the boxed result.
 def fcatch(F, *a, **k):
     def fcatch(*a, **k):
@@ -124,7 +153,7 @@ class PatternAnyType(Pattern):
     def __cmp__(self, other):
         return 0 if isinstance(other, self.types) else -1
     def __types__(self):
-        items = {item for item in []}
+        items = set([])
         for item in self.types:
             if isinstance(item, (builtins.list, builtins.tuple, builtins.set)):
                 for item in item:
@@ -443,7 +472,7 @@ class multicase(object):
             # add the documentation for the individual case.
             doc = (function.__doc__ or '').split('\n')
             if len(doc) > 1:
-                item, lines = "{:s} -> ".format(prototype), (item for item in doc)
+                item, lines = "{:s} -> ".format(prototype), iter(doc)
                 result.append("{:s}{:s}".format(item, next(lines)))
                 result.extend("{: >{padding:d}s}".format(line, padding=len(item) + len(line)) for line in map(operator.methodcaller('strip'), lines))
             elif len(doc) == 1:
@@ -454,7 +483,7 @@ class multicase(object):
     @classmethod
     def flatten(cls, iterable):
         '''Take the provided `iterable` (or tree) and then yield each individual element resulting in it being "flattened".'''
-        duplicates = {item for item in []}
+        duplicates = set([])
         for item in iterable:
             if isinstance(item, (builtins.list, builtins.tuple, builtins.set)):
                 for item in cls.flatten(item):
@@ -470,7 +499,7 @@ class multicase(object):
         return
 
     @classmethod
-    def prototype(cls, function, constraints={}, ignored={item for item in []}):
+    def prototype(cls, function, constraints={}, ignored=set([])):
         '''Generate a prototype for an instance of a `function`.'''
         args, defaults, (star, starstar) = cls.ex_args(function)
 
@@ -503,7 +532,7 @@ class multicase(object):
 
         # Log any multicased functions that accidentally define type constraints for parameters
         # which don't actually exist. This is specifically done in order to aid debugging.
-        unavailable = {constraint_name for constraint_name in constraints.keys()} - {argument_name for argument_name in args}
+        unavailable = set(constraints.keys()) - set(args)
         if unavailable:
             co = pycompat.function.code(function)
             co_fullname, co_filename, co_lineno = '.'.join([function.__module__, function.__name__]), os.path.relpath(co.co_filename, idaapi.get_user_idadir()), co.co_firstlineno
@@ -529,7 +558,7 @@ class multicase(object):
         for F, constraints, (parameter_ignore_count, parameter_names, parameter_defaults, (parameter_wildargs, parameter_wildkeywords)) in heap:
 
             # Grab our values that we're going to match with.
-            parameter_iterator, parameter_keywords = (item for item in args), {kwparam : kwvalue for kwparam, kwvalue in kwds.items()}
+            parameter_iterator, parameter_keywords = iter(args), dict(kwds.items())
 
             # Skip the ignored argument values within our parameters.
             [next(item) for item in [parameter_iterator] * parameter_ignore_count]
@@ -573,16 +602,18 @@ class multicase(object):
             # so that we can process and use it. Any parameters left in parameter_iterator
             # or parameter_keywords are considered part of the wildcard parameters.
             argument_values = builtins.tuple(parameter_values)
-            argument_wildcard, argument_keywords = [item for item in parameter_iterator], {kwparam : kwvalue for kwparam, kwvalue in parameter_keywords.items()}
+            argument_wildcard, argument_keywords = list(parameter_iterator), dict(
+                parameter_keywords
+            )
 
             # First check if we have any extra parameters. If we do, but there's no wildcards
             # available in our current match, then it doesn't fit and we move onto the next one.
-            if not parameter_wildargs and len(argument_wildcard):
-                continue
-
-            # If we have any extra keywords, then we need to ensure that there's a keyword
-            # parameter in our current match. Otherwise, it doesn't fit and we need to move on.
-            elif not parameter_wildkeywords and argument_keywords:
+            if (
+                not parameter_wildargs
+                and len(argument_wildcard)
+                or not parameter_wildkeywords
+                and argument_keywords
+            ):
                 continue
 
             # Second, we need to check that our argument length actually matches. To accomplish
@@ -717,7 +748,9 @@ class multicase(object):
     def ex_args(cls, f):
         '''Extract the arguments from a function.'''
         c = pycompat.function.code(f)
-        varnames_count, varnames_iter = pycompat.code.argcount(c), (item for item in pycompat.code.varnames(c))
+        varnames_count, varnames_iter = pycompat.code.argcount(c), iter(
+            pycompat.code.varnames(c)
+        )
         args = tuple(itertools.islice(varnames_iter, varnames_count))
         res = { a : v for v, a in zip(reversed(pycompat.function.defaults(f) or []), reversed(args)) }
         try: starargs = next(varnames_iter) if pycompat.code.flags(c) & cls.CO_VARARGS else ""
@@ -891,31 +924,29 @@ class character(object):
                 for ch in cls.map(ch):
                     result.send(ch)
 
-            # check if character is a backslash
             elif operator.contains(cls.const.backslash, ch):
                 result.send(cls.const.backslash)
                 result.send(ch)
 
-            # check if character is printable (py2 and unicode)
             elif sys.version_info.major < 3 and isinstance(ch, unicode) and cls.unicodeQ(ch):
                 result.send(ch)
 
-            # check if character is printable (py3 and unicode)
-            elif 2 < sys.version_info.major and isinstance(ch, str) and cls.unicodeQ(ch):
+            elif (
+                sys.version_info.major > 2
+                and isinstance(ch, str)
+                and cls.unicodeQ(ch)
+            ):
                 result.send(ch)
 
-            # check if character is printable (ascii)
             elif isinstance(ch, six.string_types) and cls.asciiQ(ch):
                 result.send(ch)
 
-            # check if character is a single-byte ascii
             elif n < 0x100:
                 result.send(cls.const.backslash)
                 result.send(u'x')
                 result.send(cls.to_hex((n & 0xf0) // 0x10))
                 result.send(cls.to_hex((n & 0x0f) // 0x01))
 
-            # check that character is an unprintable unicode character
             elif n < 0x10000:
                 result.send(cls.const.backslash)
                 result.send(u'u')
@@ -924,7 +955,6 @@ class character(object):
                 result.send(cls.to_hex((n & 0x00f0) // 0x0010))
                 result.send(cls.to_hex((n & 0x000f) // 0x0001))
 
-            # maybe the character is an unprintable long-unicode character
             elif n < 0x110000:
                 result.send(cls.const.backslash)
                 result.send(u'U')
@@ -937,7 +967,6 @@ class character(object):
                 result.send(cls.to_hex((n & 0x000000f0) // 0x00000010))
                 result.send(cls.to_hex((n & 0x0000000f) // 0x00000001))
 
-            # if we're here, then we have no idea what kind of character it is
             else:
                 raise internal.exceptions.InvalidFormatError(u"{:s}.unescape({!s}) : Unable to determine how to escape the current character code ({:#x}).".format('.'.join([__name__, cls.__name__]), result, n))
 
@@ -1163,16 +1192,11 @@ class string(object):
         @classmethod
         def kwargs(cls, kwds):
             '''Format a dictionary (from kwargs) so that it can be emitted to a user as part of a message.'''
-            res = []
+            res = [
+                "{:s}={!s}".format(cls.escape(key), cls.repr(value))
+                for key, value in kwds.items()
+            ]
 
-            # Escape each key, and repr() each value so that we can emit the keyword
-            # parameters for a function call using the same syntax that the user
-            # would likely type it.
-            for key, value in kwds.items():
-                # XXX: we could probably force `key` to a string here, but kwargs should
-                #      _never_ have a non-string passed as a parameter name. therefore
-                #      we graciously accept any exception that gets raised here.
-                res.append("{:s}={!s}".format(cls.escape(key), cls.repr(value)))
             return ', '.join(res)
 
     @classmethod
@@ -1641,7 +1665,7 @@ class wrap(object):
     def arguments(cls, f):
         '''Extract the arguments from a function `f`.'''
         c = pycompat.function.code(f)
-        count, iterable = pycompat.code.argcount(c), (item for item in pycompat.code.varnames(c))
+        count, iterable = pycompat.code.argcount(c), iter(pycompat.code.varnames(c))
         args = tuple(itertools.islice(iterable, count))
         res = { a : v for v, a in zip(reversed(pycompat.function.defaults(f) or []), reversed(args)) }
         starargs = next(iterable, '') if pycompat.code.flags(c) & cls.CO_VARARGS else ''
@@ -1678,7 +1702,7 @@ class wrap(object):
 ### function decorator for translating arguments belonging to a function
 def transform(translate, *names):
     '''This applies the callable `translate` to any function arguments that match `names` in the decorated function.'''
-    names = {name for name in names}
+    names = set(names)
     def wrapper(F, *rargs, **rkwds):
         f = wrap.extract(F)
         argnames, defaults, (wildname, _) = wrap.arguments(f)
@@ -1701,8 +1725,8 @@ def transform(translate, *names):
                 raise cls("{!s}: Exception raised while transforming parameters `{:s}` with value {!r}".format('.'.join([f.__module__, f.__name__]), wildname, value))
 
         # convert any keywords arguments
-        kwds = {k : v for k, v in rkwds.items()}
-        for argname in {item for item in rkwds.keys()} & names:
+        kwds = dict(rkwds)
+        for argname in set(rkwds.keys()) & names:
             try:
                 kwds[argname] = translate(kwds[argname])
             except Exception as E:
@@ -1713,6 +1737,7 @@ def transform(translate, *names):
     # decorater that wraps the function `F` with `wrapper`.
     def result(F):
         return wrap(F, wrapper)
+
     return result
 
 def get_array_typecode(size, *default):

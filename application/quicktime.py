@@ -42,12 +42,7 @@ def resolveDispatcher(code):
     res = getMajorDispatchTableAddress() + major*8
     majorFlag = idc.get_wide_dword(res)
     majorAddress = idc.get_wide_dword(res+4)
-    if majorFlag != 0:
-        return majorAddress + (minor*0x10)
-
-    #print("%x"% getMinorDispatchTableAddress(majorAddress))
-    #print("resolved by 0x%x(%x)"% (majorAddress, minor))
-    return majorAddress
+    return majorAddress + (minor*0x10) if majorFlag != 0 else majorAddress
 
 def getDispatchCode(ea):
     # get dispatch code out of an instruction

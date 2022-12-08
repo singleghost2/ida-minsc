@@ -36,7 +36,7 @@ output = sys.stderr
 ### miscellaneous tag utilities
 def list():
     '''Return the tags for the all of the function contents within the database as a set.'''
-    return {res for res in itertools.chain(*(res for _, res in db.selectcontents()))}
+    return set(itertools.chain(*(res for _, res in db.selectcontents())))
 
 ### internal utility functions and classes
 def lvarNameQ(name):
@@ -68,7 +68,7 @@ def addressToLocation(ea, chunks=None):
     `chunks` is specified as a parameter, then use it as a tuple
     of ranges in order to calculate the correct address.
     """
-    F, chunks = func.by(ea), chunks or [ch for ch in func.chunks(ea)]
+    F, chunks = func.by(ea), chunks or list(func.chunks(ea))
     cid, base = next((i, l) for i, (l, r) in enumerate(chunks) if l <= ea < r)
     return func.top(F), cid, ea - base
 
@@ -107,9 +107,8 @@ class read(object):
         for ea in func.iterate(F):
             ui.navigation.set(ea)
 
-            # yield the tags
-            res = db.tag(ea)
-            if res: yield ea, res
+            if res := db.tag(ea):
+                yield ea, res
         return
 
     ## reading the tags from a frame
@@ -157,15 +156,15 @@ class read(object):
 
         # read the globals and the contents
         six.print_(u'--> Grabbing globals...', file=output)
-        Globals = { ea : res for ea, res in read.globals() }
+        Globals = dict(read.globals())
 
         # read all content
         six.print_(u'--> Grabbing contents from all functions...', file=output)
-        Contents = { loc : res for loc, res in read.contents(location=location) }
+        Contents = dict(read.contents(location=location))
 
         # read the frames
         six.print_(u'--> Grabbing frames from all functions...', file=output)
-        Frames = {ea : res for ea, res in read.frames()}
+        Frames = dict(read.frames())
 
         # return everything back to the user
         return Globals, Contents, Frames
@@ -184,10 +183,8 @@ class read(object):
             # figure out which tag function to use
             f = func.tag if funcQ else db.tag
 
-            # grab the tag and yield it
-            res = f(ea)
-            if res: yield ea, res
-
+            if res := f(ea):
+                yield ea, res
             # if we're in a function, then seek to the next chunk
             if funcQ:
                 _, ea = func.chunk(ea)
@@ -213,7 +210,7 @@ class read(object):
         for ea in db.functions():
 
             # it's faster to precalculate the chunks here
-            F, chunks = func.by(ea), [ch for ch in func.chunks(ea)]
+            F, chunks = func.by(ea), list(func.chunks(ea))
 
             # Iterate through the function's contents yielding each tag
             for ea, res in read.content(ea):
@@ -230,8 +227,8 @@ class read(object):
 
         for ea in db.functions():
             ui.navigation.procedure(ea)
-            res = dict(read.frame(ea))
-            if res: yield ea, res
+            if res := dict(read.frame(ea)):
+                yield ea, res
         return
 
 ### Applying tags to the database
@@ -272,11 +269,10 @@ class apply(object):
         try:
             F = func.frame(ea)
 
-        # if no frame exists for the function, we'll need to create it
         except internal.exceptions.MissingTypeOrAttribute:
 
             # first we figure out the bounds of our members in order to figure out the the lvars and args sizes
-            framekeys = {item for item in frame.keys()}
+            framekeys = set(frame.keys())
             minimum, maximum = min(framekeys), max(framekeys)
 
             # calculate the size of regs by first finding everything that begins at offset 0
@@ -341,13 +337,11 @@ class apply(object):
 
             # check if the tag mapping resulted in the deletion of a tag
             if len(new) != len(res):
-                reskeys, newkeys = ({item for item in items.keys()} for items in [res, new])
+                reskeys, newkeys = (set(items.keys()) for items in [res, new])
                 for name in reskeys - newkeys:
                     logging.warning(u"{:s}.frame({:#x}, ...{:s}) : Refusing requested tag mapping as it results in the tag \"{:s}\" overwriting tag \"{:s}\" for the frame member {:+#x}. The value {!s} would be overwritten by {!s}.".format('.'.join([__name__, cls.__name__]), ea, tagmap_output, internal.utils.string.escape(name, '"'), internal.utils.string.escape(tagmap[name], '"'), offset, internal.utils.string.repr(res[name]), internal.utils.string.repr(res[tagmap[name]])))
-                pass
-
             # warn the user about what's going to be overwritten prior to doing it
-            statekeys, newkeys = ({item for item in items.keys()} for items in [state, new])
+            statekeys, newkeys = (set(items.keys()) for items in [state, new])
             for name in statekeys & newkeys:
                 if state[name] == new[name]: continue
                 logging.warning(u"{:s}.frame({:#x}, ...{:s}) : Overwriting tag \"{:s}\" for frame member {:+#x} with new value {!s}. The old value was {!s}.".format('.'.join([__name__, cls.__name__]), ea, tagmap_output, internal.utils.string.escape(name, '"'), offset, internal.utils.string.repr(new[name]), internal.utils.string.repr(state[name])))
@@ -437,13 +431,11 @@ class apply(object):
 
             # check if the tag mapping resulted in the deletion of a tag
             if len(new) != len(res):
-                reskeys, newkeys = ({item for item in items.keys()} for items in [res, new])
+                reskeys, newkeys = (set(items.keys()) for items in [res, new])
                 for name in reskeys - newkeys:
                     logging.warning(u"{:s}.globals(...{:s}) : Refusing requested tag mapping as it results in the tag \"{:s}\" overwriting the tag \"{:s}\" in the global {:#x}. The value {!s} would be replaced with {!s}.".format('.'.join([__name__, cls.__name__]), tagmap_output, internal.utils.string.escape(name, '"'), internal.utils.string.escape(tagmap[name], '"'), ea, internal.utils.string.repr(res[name]), internal.utils.string.repr(res[tagmap[name]])))
-                pass
-
             # check what's going to be overwritten with different values prior to doing it
-            statekeys, newkeys = ({item for item in items.keys()} for items in [state, new])
+            statekeys, newkeys = (set(items.keys()) for items in [state, new])
             for name in statekeys & newkeys:
                 if state[name] == new[name]: continue
                 logging.warning(u"{:s}.globals(...{:s}) : Overwriting tag \"{:s}\" for global at {:#x} with new value {!s}. Old value was {!s}.".format('.'.join([__name__, cls.__name__]), tagmap_output, internal.utils.string.escape(name, '"'), ea, internal.utils.string.repr(new[name]), internal.utils.string.repr(state[name])))
@@ -481,13 +473,11 @@ class apply(object):
 
             # check if the tag mapping resulted in the deletion of a tag
             if len(new) != len(res):
-                reskeys, newkeys = ({item for item in items.keys()} for items in [res, new])
+                reskeys, newkeys = (set(items.keys()) for items in [res, new])
                 for name in reskeys - newkeys:
                     logging.warning(u"{:s}.contents(...{:s}) : Refusing requested tag mapping as it results in the tag \"{:s}\" overwriting tag \"{:s}\" for the contents at {:#x}. The value {!s} would be overwritten by {!s}.".format('.'.join([__name__, cls.__name__]), tagmap_output, internal.utils.string.escape(name, '"'), internal.utils.string.escape(tagmap[name], '"'), ea, internal.utils.string.repr(res[name]), internal.utils.string.repr(res[tagmap[name]])))
-                pass
-
             # inform the user if any tags are being overwritten with different values
-            statekeys, newkeys = ({item for item in items.keys()} for items in [state, new])
+            statekeys, newkeys = (set(items.keys()) for items in [state, new])
             for name in statekeys & newkeys:
                 if state[name] == new[name]: continue
                 logging.warning(u"{:s}.contents(...{:s}) : Overwriting contents tag \"{:s}\" for address {:#x} with new value {!s}. Old value was {!s}.".format('.'.join([__name__, cls.__name__]), tagmap_output, internal.utils.string.escape(name, '"'), ea, internal.utils.string.repr(new[name]), internal.utils.string.repr(state[name])))
@@ -554,7 +544,7 @@ class export(object):
     def frame(cls, F, *tags):
         '''Iterate through each field containing the specified `tags` within the frame belonging to the function `ea`.'''
         global read, internal
-        tags_ = { tag for tag in tags }
+        tags_ = set(tags)
 
         for ofs, item in read.frame(F):
             field, type, state = item
@@ -565,7 +555,7 @@ class export(object):
                 continue
 
             # otherwise, store the state in a dictionary using only the tags the user asked for.
-            state_keys = {item for item in state}
+            state_keys = set(state)
             save = { name : state[name] for name in state_keys & tags_ }
 
             # if anything was found, then re-encode it and yield to the user
@@ -587,18 +577,18 @@ class export(object):
         # collect all the globals into a dictionary
         six.print_(u'--> Grabbing globals (cached)...', file=output)
         iterable = export.globals(*tags)
-        Globals = {ea : res for ea, res in filter(None, iterable)}
+        Globals = dict(filter(None, iterable))
 
         # grab all the contents into a dictionary
         six.print_(u'--> Grabbing contents from functions (cached)...', file=output)
         location = location.get('location', False)
         iterable = export.contents(*tags, location=location)
-        Contents = {loc : res for loc, res in filter(None, iterable)}
+        Contents = dict(filter(None, iterable))
 
         # grab any frames into a dictionary
         six.print_(u'--> Grabbing frames from functions (cached)...', file=output)
         iterable = export.frames(*tags)
-        Frames = {ea : res for ea, res in filter(None, iterable)}
+        Frames = dict(filter(None, iterable))
 
         # return it back to the user
         return Globals, Contents, Frames
@@ -637,12 +627,12 @@ class export(object):
     def frames(*tags):
         '''Iterate through the fields in each function's frame containing the specified `tags`.'''
         global export
-        tags_ = {x for x in tags}
+        tags_ = set(tags)
 
         for ea in db.functions():
             ui.navigation.procedure(ea)
-            res = dict(export.frame(ea, *tags))
-            if res: yield ea, res
+            if res := dict(export.frame(ea, *tags)):
+                yield ea, res
         return
 
 __all__ = ['list', 'read', 'export', 'apply']

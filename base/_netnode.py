@@ -246,53 +246,101 @@ class utils(object):
     @classmethod
     def falt(cls, node, tag=netnode.alttag):
         '''Iterate through each "altval" for a given `node` in order, and yield each (item, value) that was found.'''
-        for item in cls.valfiter(node, netnode.altfirst, netnode.altlast, netnode.altnext, netnode.altval, tag=tag):
-            yield item
+        yield from cls.valfiter(
+            node,
+            netnode.altfirst,
+            netnode.altlast,
+            netnode.altnext,
+            netnode.altval,
+            tag=tag,
+        )
         return
     @classmethod
     def ralt(cls, node, tag=netnode.alttag):
         '''Iterate through each "altval" for a given `node` in reverse order, and yield each (item, value) that was found.'''
-        for item in cls.valriter(node, netnode.altfirst, netnode.altlast, netnode.altprev, netnode.altval, tag=tag):
-            yield item
+        yield from cls.valriter(
+            node,
+            netnode.altfirst,
+            netnode.altlast,
+            netnode.altprev,
+            netnode.altval,
+            tag=tag,
+        )
         return
 
     @classmethod
     def fsup(cls, node, value=None, tag=netnode.suptag):
         '''Iterate through each "supval" for a given `node` in order, and yield each (item, value) that was found.'''
-        for item in cls.valfiter(node, netnode.supfirst, netnode.suplast, netnode.supnext, value or netnode.supval, tag=tag):
-            yield item
+        yield from cls.valfiter(
+            node,
+            netnode.supfirst,
+            netnode.suplast,
+            netnode.supnext,
+            value or netnode.supval,
+            tag=tag,
+        )
         return
     @classmethod
     def rsup(cls, node, value=None, tag=netnode.suptag):
         '''Iterate through each "supval" for a given `node` in reverse order, and yield each (item, value) that was found.'''
-        for item in cls.valriter(node, netnode.supfirst, netnode.suplast, netnode.supprev, value or netnode.supval, tag=tag):
-            yield item
+        yield from cls.valriter(
+            node,
+            netnode.supfirst,
+            netnode.suplast,
+            netnode.supprev,
+            value or netnode.supval,
+            tag=tag,
+        )
         return
 
     @classmethod
     def fhash(cls, node, value=None, tag=netnode.hashtag):
         '''Iterate through each "hashval" for a given `node` in order, and yield each (item, value) that was found.'''
-        for item in cls.hfiter(node, netnode.hashfirst, netnode.hashlast, netnode.hashnext, value or netnode.hashval, tag=tag):
-            yield item
+        yield from cls.hfiter(
+            node,
+            netnode.hashfirst,
+            netnode.hashlast,
+            netnode.hashnext,
+            value or netnode.hashval,
+            tag=tag,
+        )
         return
     @classmethod
     def rhash(cls, node, value=None, tag=netnode.hashtag):
         '''Iterate through each "hashval" for a given `node` in reverse order, and yield each (item, value) that was found.'''
-        for item in cls.hriter(node, netnode.hashfirst, netnode.hashlast, netnode.hashprev, value or netnode.hashval, tag=tag):
-            yield item
+        yield from cls.hriter(
+            node,
+            netnode.hashfirst,
+            netnode.hashlast,
+            netnode.hashprev,
+            value or netnode.hashval,
+            tag=tag,
+        )
         return
 
     @classmethod
     def fchar(cls, node, value=None, tag=netnode.chartag):
         '''Iterate through each "charval" for a given `node` in order, and yield each (item, value) that was found.'''
-        for item in cls.valfiter(node, netnode.charfirst, netnode.charlast, netnode.charnext, value or netnode.charval, tag=tag):
-            yield item
+        yield from cls.valfiter(
+            node,
+            netnode.charfirst,
+            netnode.charlast,
+            netnode.charnext,
+            value or netnode.charval,
+            tag=tag,
+        )
         return
     @classmethod
     def rchar(cls, node, value=None, tag=netnode.chartag):
         '''Iterate through each "charval" for a given `node` in reverse order, and yield each (item, value) that was found.'''
-        for item in cls.valriter(node, netnode.charfirst, netnode.charlast, netnode.charprev, value or netnode.charval, tag=tag):
-            yield item
+        yield from cls.valriter(
+            node,
+            netnode.charfirst,
+            netnode.charlast,
+            netnode.charprev,
+            value or netnode.charval,
+            tag=tag,
+        )
         return
 
 def new(name):
@@ -392,9 +440,7 @@ class value(object):
         node = utils.get(nodeidx)
         if isinstance(value, memoryview):
             return netnode.set(nodeidx, value.tobytes())
-        elif isinstance(value, bytes):
-            return netnode.set(node, value)
-        elif isinstance(value, six.string_types):
+        elif isinstance(value, (bytes, six.string_types)):
             return netnode.set(node, value)
         elif isinstance(value, six.integer_types):
             return netnode.set_long(node, value)
@@ -489,13 +535,11 @@ def riter():
 
 def fitems():
     '''Iterate through each netnode index and node from the database in order.'''
-    for nodeidx, item in utils.fenumerate():
-        yield nodeidx, item
+    yield from utils.fenumerate()
     return
 def ritems():
     '''Iterate through each netnode index and node from the database in reverse order.'''
-    for nodeidx, item in utils.renumerate():
-        yield nodeidx, item
+    yield from utils.renumerate()
     return
 
 ### node altval : sparse array[integer] = integer
@@ -541,8 +585,7 @@ class alt(object):
     def fitems(cls, nodeidx, tag=None):
         '''Iterate through all of the elements of the "altval" array belonging to the netnode identified by `nodeidx` in order.'''
         node = utils.get(nodeidx)
-        for nalt, altval in utils.falt(node, tag=tag or netnode.alttag):
-            yield nalt, altval
+        yield from utils.falt(node, tag=tag or netnode.alttag)
         return
 
     @classmethod
@@ -557,16 +600,16 @@ class alt(object):
     def ritems(cls, nodeidx, tag=None):
         '''Iterate through all of the elements of the "altval" array belonging to the netnode identified by `nodeidx` in reverse order.'''
         node = utils.get(nodeidx)
-        for nalt, altval in utils.ralt(node, tag=tag or netnode.alttag):
-            yield nalt, altval
+        yield from utils.ralt(node, tag=tag or netnode.alttag)
         return
 
     @classmethod
     def repr(cls, nodeidx, tag=None):
         '''Display the "altval" array belonging to the netnode identified by `nodeidx`.'''
-        res = []
-        for index, value in cls.fitems(nodeidx, tag=tag):
-            res.append("{0:x} : {1:#x} ({1:d})".format(index, value))
+        res = [
+            "{0:x} : {1:#x} ({1:d})".format(index, value)
+            for index, value in cls.fitems(nodeidx, tag=tag)
+        ]
         if not res:
             description = "{:#x}".format(nodeidx) if isinstance(nodeidx, six.integer_types) else "{!r}".format(nodeidx)
             raise internal.exceptions.MissingTypeOrAttribute(u"{:s}.repr({:s}) : The specified node ({:s}) does not have any altvals.".format('.'.join([__name__, cls.__name__]), description, description))
@@ -596,9 +639,7 @@ class sup(object):
         elif issubclass(type, memoryview):
             res = netnode.supval(node, index, tag or netnode.suptag)
             return res and memoryview(res)
-        elif issubclass(type, bytes):
-            return netnode.supstr(node, index, tag or netnode.suptag)
-        elif issubclass(type, six.string_types):
+        elif issubclass(type, bytes) or issubclass(type, six.string_types):
             return netnode.supstr(node, index, tag or netnode.suptag)
         description = "{:#x}".format(nodeidx) if isinstance(nodeidx, six.integer_types) else "{!r}".format(nodeidx)
         raise internal.exceptions.InvalidTypeOrValueError(u"{:s}.get({:#x}, {:#x}, type={!r}) : An unsupported type ({!r}) was requested for the netnode's supval.".format('.'.join([__name__, cls.__name__]), description, index, type, type))
@@ -630,9 +671,7 @@ class sup(object):
             value, transform = netnode.supval, internal.utils.fidentity
         elif issubclass(type, memoryview):
             value, transform = netnode.supval, memoryview
-        elif issubclass(type, bytes):
-            value, transform = netnode.supstr, internal.utils.fidentity
-        elif issubclass(type, six.string_types):
+        elif issubclass(type, bytes) or issubclass(type, six.string_types):
             value, transform = netnode.supstr, internal.utils.fidentity
         else:
             description = "{:#x}".format(nodeidx) if isinstance(nodeidx, six.integer_types) else "{!r}".format(nodeidx)
@@ -657,9 +696,7 @@ class sup(object):
             value, transform = netnode.supval, internal.utils.fidentity
         elif issubclass(type, memoryview):
             value, transform = netnode.supval, memoryview
-        elif issubclass(type, bytes):
-            value, transform = netnode.supstr, internal.utils.fidentity
-        elif issubclass(type, six.string_types):
+        elif issubclass(type, bytes) or issubclass(type, six.string_types):
             value, transform = netnode.supstr, internal.utils.fidentity
         else:
             description = "{:#x}".format(nodeidx) if isinstance(nodeidx, six.integer_types) else "{!r}".format(nodeidx)

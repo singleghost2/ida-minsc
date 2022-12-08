@@ -339,7 +339,7 @@ class typemap(object):
         # the sizes we want to look up, and then we extract the flag and typeid
         # from the table that we determined.
         if isinstance(pythonType, ().__class__) and not isinstance(next(iter(pythonType)), (idaapi.struc_t, structure.structure_t)):
-            table = cls.typemap[builtins.next(item for item in pythonType)]
+            table = cls.typemap[builtins.next(iter(pythonType))]
 
             #t, sz = pythonType
             #table = cls.typemap[t] if not isinstance(t, tuple) else cls.typemap[t[0]]
@@ -352,30 +352,16 @@ class typemap(object):
             (t, sz), count = pythonType, 1
             table = table[abs(sz)]
 
-        # If we were given a pythonic-type that's a list, then we know that this
-        # is an array of some kind. We extract the count from the second element
-        # of the list, but then we'll need to recurse into ourselves in order to
-        # figure out the actual flag, type-id, and size of the type that we were
-        # given by the first element of the list.
         elif isinstance(pythonType, [].__class__):
             res, count = pythonType
             flag, typeid, sz = cls.resolve(res)
 
-        # If our pythonic-type is an actual structure_t, then obviously this
-        # type is representing a structure. We know how to create the structure
-        # flag, but we'll need to extract the type-id and the structure's size
-        # from the properties of the structure that we were given.
         elif isinstance(pythonType, structure.structure_t):
             flag, typeid, sz = struc_flag(), pythonType.id, pythonType.size
 
-        # If our pythonic-type is an idaapi.struc_t, then we need to do
-        # pretty much the exact same thing that we did for the structure_t
-        # and extract both its type-id and size.
         elif isinstance(pythonType, idaapi.struc_t):
             flag, typeid, sz = struc_flag(), pythonType.id, idaapi.get_struc_size(pythonType)
 
-        # if we got here with a tuple, then that's because we're using a variable-length
-        # structure...which really means the size is forced.
         elif isinstance(pythonType, ().__class__):
             t, sz = pythonType
             sptr = t.ptr if isinstance(t, structure.structure_t) else t
@@ -386,11 +372,6 @@ class typemap(object):
             if not sptr.props & getattr(idaapi, 'SF_VAR', 1):
                 sz = idaapi.get_struc_size(sptr)
 
-        # Anything else should be the default value that we're going to have to
-        # look up. We start by using the type to figure out the correct table,
-        # and then we grab the flags and type-id from the None key for the
-        # pythonType. This should give us the default type information for the
-        # current database and architecture.
         else:
             table = cls.typemap[pythonType]
             flag, typeid = table[None]
@@ -420,13 +401,12 @@ class prioritybase(object):
 
     def __init__(self):
         self.__cache__ = collections.defaultdict(list)
-        self.__disabled = {item for item in []}
+        self.__disabled = set([])
         self.__traceback = {}
 
     def __iter__(self):
         '''Iterate through each target that is currently attached to this object.'''
-        for target in self.__cache__:
-            yield target
+        yield from self.__cache__
         return
 
     def __contains__(self, target):
@@ -464,7 +444,7 @@ class prioritybase(object):
 
     def close(self):
         '''Disconnect from all of the targets that are currently attached'''
-        ok, items = True, {item for item in self.__cache__}
+        ok, items = True, set(self.__cache__)
 
         # Simply detach every available target one-by-one.
         for target in items:
@@ -481,7 +461,7 @@ class prioritybase(object):
         # This property is intended to be part of the public api and
         # thus it can reimplemented by one if considered necessary.
 
-        result = {item for item in self.__cache__}
+        result = set(self.__cache__)
         return sorted(result)
 
     def list(self):
@@ -503,16 +483,16 @@ class prioritybase(object):
     @property
     def disabled(self):
         '''Return all of the attached targets that are currently disabled.'''
-        result = {item for item in self.__disabled}
+        result = set(self.__disabled)
         return sorted(result)
     @property
     def enabled(self):
         '''Return all of the attached targets that are currently enabled.'''
-        result = {item for item in self.__cache__} - {item for item in self.__disabled}
+        result = set(self.__cache__) - set(self.__disabled)
         return sorted(result)
 
     def __repr__(self):
-        cls, enabled = self.__class__, {item for item in self.__cache__} - {item for item in self.__disabled}
+        cls, enabled = self.__class__, set(self.__cache__) - set(self.__disabled)
 
         # Extract the parameters from a function. This is just a
         # wrapper around utils.multicase.ex_args so we can extract
@@ -574,14 +554,14 @@ class prioritybase(object):
         # First gather all our enabled hooks.
         for target in sorted(enabled):
             items = self.__cache__[target]
-            hooks = sorted([(priority, callable) for priority, callable in items], key=operator.itemgetter(0))
+            hooks = sorted(list(items), key=operator.itemgetter(0))
             items = ["{description:s}[{:+d}]".format(priority, description=name if args is None else "{:s}({:s})".format(name, ', '.join(args))) for priority, name, args in map(repr_prioritytuple, hooks)]
             res.append("{:<{:d}s} : {!s}".format(self.__formatter__(target), alignment_enabled, ' '.join(items) if items else '...nothing attached...'))
 
         # Now we can append all the disabled ones.
         for target in sorted(self.__disabled):
             items = self.__cache__[target]
-            hooks = sorted([(priority, callable) for priority, callable in items], key=operator.itemgetter(0))
+            hooks = sorted(list(items), key=operator.itemgetter(0))
             items = ["{description:s}[{:+d}]".format(priority, description=name if args is None else "{:s}({:s})".format(name, ', '.join(args))) for priority, name, args in map(repr_prioritytuple, hooks)]
             res.append("{:<{:d}s} : {!s}".format("{:s} (disabled)".format(self.__formatter__(target)), alignment_disabled, ' '.join(items) if items else '...nothing attached...'))
 
@@ -609,7 +589,7 @@ class prioritybase(object):
 
     def disable(self, target):
         '''Disable execution of all the callables for the specified `target`.'''
-        cls, enabled = self.__class__, {item for item in self.__cache__} - self.__disabled
+        cls, enabled = self.__class__, set(self.__cache__) - self.__disabled
         if target not in self.__cache__:
             logging.fatal(u"{:s}.disable({!r}) : The requested target ({:s}) is not attached. {:s}".format('.'.join([__name__, cls.__name__]), target, self.__formatter__(target), "Currently enabled targets are: {:s}".format(', '.join(map(self.__formatter__, enabled))) if enabled else 'All targets have already been disabled.' if self.__disabled else 'There are no currently attached targets to disable.'))
             return False
@@ -659,12 +639,7 @@ class prioritybase(object):
         if target not in self.__cache__:
             cls, format = self.__class__, "{:d}".format if isinstance(index, six.integer_types) else "{!r}".format
             raise NameError(u"{:s}.pop({!r}, {:d}) : The requested target ({:s}) is not attached. Currently attached targets are {:s}.".format('.'.join([__name__, cls.__name__]), target, format(index), self.__formatter__(target), "Currently attached targets are: {:s}".format(', '.join(map(self.__formatter__, self.__cache__))) if self.__cache__ else 'There are no targets currently attached to pop from.'))
-        state = []
-
-        # Iterate through the cache for the specified target and collect
-        # each callable so we can figure out which one to remove.
-        for (priority, F) in self.__cache__[target][:]:
-            state.append((priority, F))
+        state = list(self.__cache__[target][:])
 
         # Pop off the result the user requested, and then combine our
         # state back into the cache we took it from.
@@ -704,7 +679,7 @@ class prioritybase(object):
         else:
             self.__cache__[target][:] = []
 
-        return True if found else False
+        return bool(found)
 
     def remove(self, target, priority):
         '''Remove the first callable from the specified `target` that has the provided `priority`.'''
@@ -900,7 +875,7 @@ class priorityhook(prioritybase):
 
         # Now we can use the methods we generated and stored in our dictionary to
         # create a new type and use it to instantiate a new hook object.
-        cls = type(klass.__name__, (klass,), {attribute : callable for attribute, callable in methods.items()})
+        cls = type(klass.__name__, (klass,), dict(methods))
         instance = cls()
 
         # Then we just stash away our object and then install the hooks.
@@ -912,7 +887,7 @@ class priorityhook(prioritybase):
     @property
     def available(self):
         '''Return all of the targets that may be attached to.'''
-        result = {name for name in self.__attachable__}
+        result = set(self.__attachable__)
         return sorted(result)
 
     def list(self):
@@ -929,7 +904,7 @@ class priorityhook(prioritybase):
         # FIXME: This should be extracting the actual documentation instead of just the prototype.
         def parameters(doc):
             filtered = filter(None, doc.split('\n'))
-            prototype = next(item for item in filtered)
+            prototype = next(iter(filtered))
             replaced = prototype.replace('self, ', '').replace('(self)', '()')
             return replaced.strip()
 
@@ -1067,7 +1042,7 @@ class prioritynotification(prioritybase):
     @property
     def available(self):
         '''Return all of the notifications that may be attached to.'''
-        result = {notification for notification in self.__lookup}
+        result = set(self.__lookup)
         return sorted(result)
 
     def attach(self, notification):
@@ -1146,7 +1121,7 @@ class priorityhxevent(prioritybase):
     @property
     def available(self):
         '''Return all of the events that one may want to attach to.'''
-        result = {event for event in self.__events__}
+        result = set(self.__events__)
         return sorted(result)
 
     def attach(self, event):
@@ -1211,7 +1186,7 @@ class priorityhxevent(prioritybase):
             [logging.debug(u"{:s}.close() : Event {:s} is still attached{:s}.".format('.'.join([__name__, cls.__name__]), self.__formatter__(event), " by callable {!s}".format(self.__attached__[event]) if event in self.__attached__ else '')) for event in self]
 
         # We only fail here if our state is not empty.
-        return False if self.__attached__ else True
+        return not self.__attached__
 
     def add(self, event, callable, priority=0):
         '''Add the `callable` to the queue with the given `priority` for the specified `event`.'''
@@ -1233,9 +1208,8 @@ class priorityhxevent(prioritybase):
         # We need to define this closure because Hex-Rays absolutely requires
         # you to return a 0 unless the event type specifies otherwise.
         def closure(ev, *parameters):
-            if ev == event:
-                return original(*parameters) or 0
-            return 0
+            return original(*parameters) or 0 if ev == event else 0
+
         return closure
 
     def __repr__(self):
@@ -1284,7 +1258,7 @@ class address(object):
     def __head1__(cls, ea, **silent):
         '''Adjusts `ea` so that it is pointing to the beginning of an item.'''
         entryframe = cls.pframe()
-        logF = logging.warning if not silent.get('silent', False) else logging.debug
+        logF = logging.debug if silent.get('silent', False) else logging.warning
 
         res = idaapi.get_item_head(ea)
         if ea != res:
@@ -1294,7 +1268,7 @@ class address(object):
     def __head2__(cls, start, end, **silent):
         '''Adjusts both `start` and `end` so that each are pointing to the beginning of their respective items.'''
         entryframe = cls.pframe()
-        logF = logging.warning if not silent.get('silent', False) else logging.debug
+        logF = logging.debug if silent.get('silent', False) else logging.warning
 
         res_start, res_end = idaapi.get_item_head(start), idaapi.get_item_head(end)
         # FIXME: off-by-one here, as end can be the size of the db.
@@ -1314,7 +1288,7 @@ class address(object):
     def __tail1__(cls, ea, **silent):
         '''Adjusts `ea` so that it is pointing to the end of an item.'''
         entryframe = cls.pframe()
-        logF = logging.warning if not silent.get('silent', False) else logging.debug
+        logF = logging.debug if silent.get('silent', False) else logging.warning
 
         res = idaapi.get_item_end(ea)
         if ea != res:
@@ -1324,7 +1298,7 @@ class address(object):
     def __tail2__(cls, start, end, **silent):
         '''Adjusts both `start` and `end` so that each are pointing to the end of their respective items.'''
         entryframe = cls.pframe()
-        logF = logging.warning if not silent.get('silent', False) else logging.debug
+        logF = logging.debug if silent.get('silent', False) else logging.warning
 
         res_start, res_end = idaapi.get_item_end(start), idaapi.get_item_end(end)
         # FIXME: off-by-one here, as end can be the size of the db.
@@ -1365,9 +1339,7 @@ class address(object):
     @classmethod
     def inside(cls, *args):
         '''Check the specified addresses are within the database and adjust so that they point to their item or range.'''
-        if len(args) > 1:
-            return cls.__inside2__(*args)
-        return cls.__inside1__(*args)
+        return cls.__inside2__(*args) if len(args) > 1 else cls.__inside1__(*args)
 
     @classmethod
     def __within1__(cls, ea):
@@ -1400,9 +1372,7 @@ class address(object):
     @classmethod
     def within(cls, *args):
         '''Check that the specified addresses are within the database.'''
-        if len(args) > 1:
-            return cls.__within2__(*args)
-        return cls.__within1__(*args)
+        return cls.__within2__(*args) if len(args) > 1 else cls.__within1__(*args)
 
     @internal.utils.multicase(ea=six.integer_types)
     @classmethod
@@ -1441,7 +1411,7 @@ class address(object):
 
         # Before we change anything, do a smoke-test to ensure that we actually
         # are able to choose a default reference size if we're going to update.
-        if len(operands) > 0 and ritype not in typemap.refinfomap:
+        if operands and ritype not in typemap.refinfomap:
             logging.warning(u"{:s}.refinfo({:#x}, {:#x}) : Unable to determine a default reference type for the given size ({:d}).".format('.'.join([__name__, cls.__name__]), ea, flag, size))
             return 0
 
@@ -1528,9 +1498,7 @@ class range(object):
         # before the ending address. This means that if the ending address
         # is less the starting one, that the boundary between them wraps
         # across the highest address.
-        if left <= right:
-            return left <= ea < right
-        return left <= ea or ea < right
+        return left <= ea < right if left <= right else left <= ea or ea < right
     contains = internal.utils.alias(within, 'range')
 
     @classmethod
@@ -1630,14 +1598,18 @@ class node(object):
             for index in builtins.range(ti.get_nargs()):
                 item = ftd[index]
                 typename, typeinfo, typecomment = item.name, item.type, item.cmt
-                arguments.append(typeinfo if not len(supfields) else (typeinfo, typename) if len(supfields) == 1 else (typeinfo, typename, typecomment))
+                arguments.append(
+                    (typeinfo, typename)
+                    if len(supfields) == 1
+                    else (typeinfo, typename, typecomment)
+                    if len(supfields)
+                    else typeinfo
+                )
 
             # Include the size for the arguments on the stack along with the
             # arguments that we just extracted.argument size along with the arguments.
             arglocs = ftd.stkargs, arguments
 
-        # If the argument locations weren't calculated, then the next element we
-        # append is the size of the stack that is allocated to the arguments.
         else:
             arglocs = ftd.stkargs
         res += [arglocs]
@@ -1705,13 +1677,6 @@ class node(object):
                 obytes, _, _ = funcarg.type.serialize()
                 res.extend(bytearray(obytes))
 
-            # That was it, so we can append our null-byte because we're done.
-            res.append(0)
-
-        # Otherwise the user gave us some new arguments to use which we'll need
-        # to serialize in order to extend our result. First we'll need to check
-        # if we were given a tuple, because if we were then this is a tuple
-        # composed of the argument stack size and our actual argument list.
         else:
             _, arglocs = arglocs if isinstance(arglocs, tuple) else (0, arglocs)
 
@@ -1726,8 +1691,8 @@ class node(object):
                 nbytes, _, _ = argloc.serialize()
                 res.extend(bytearray(nbytes))
 
-            # Last thing to do is append our null byte.
-            res.append(0)
+        # That was it, so we can append our null-byte because we're done.
+        res.append(0)
 
         # We're returning a supval here, so we need to convert our bytearray
         # back to bytes in order for it to be usable.
@@ -1768,12 +1733,7 @@ class node(object):
             # there's a member in our list that we can use. If so, then
             # we can just return it as the only choice.
             items = choices[parent.id]
-            if len(items):
-                return [items.pop(0)]
-
-            # If there wasn't anything found, then just return all our
-            # candidates because we're not sure how to proceed here.
-            return []
+            return [items.pop(0)] if len(items) else []
 
         # Now we can fetch the delta and path for the requested offset,
         # and then convert it into a list of sptrs and mptrs in order
@@ -1845,7 +1805,7 @@ class node(object):
         # (x ^ 0x3f000000)
 
         def id32(sup):
-            iterable = (item for item in bytearray(sup))
+            iterable = iter(bytearray(sup))
 
             # First consume the offset (FIXME: we only support 2 bytes for now...)
             by = builtins.next(iterable)
@@ -1855,11 +1815,11 @@ class node(object):
             else:
                 offset = 0
 
-            count, rest = le([builtins.next(iterable)]), [item for item in iterable]
+            count, rest = le([builtins.next(iterable)]), list(iterable)
             itemsize = (len(rest) // count) if count else 1
 
-            iterable = (item for item in rest)
-            chunks = [item for item in zip(*(itemsize * [iterable]))]
+            iterable = iter(rest)
+            chunks = list(zip(*(itemsize * [iterable])))
 
             if itemsize == 1:
                 return offset, [0xff000000 | le(item) for item in chunks]
@@ -1886,7 +1846,7 @@ class node(object):
         # (x ^ 0xc0000000ff) ror 8
 
         def id64(sup):
-            iterable = (item for item in bytearray(sup))
+            iterable = iter(bytearray(sup))
 
             # First consume the offset (FIXME: we only support 2 bytes for now...)
             by = builtins.next(iterable)
@@ -1898,7 +1858,7 @@ class node(object):
 
             # Now we can grab our length
             length = le([builtins.next(iterable), builtins.next(iterable)])
-            rest = [item for item in iterable]
+            rest = list(iterable)
 
             if len(rest) % 3 == 0:
                 count, mask = 3, 0x8000ff
@@ -1909,8 +1869,8 @@ class node(object):
             else:
                 raise NotImplementedError(u"{:s}.sup_opstruct({!r}) -> id64 : Error decoding supval from parameter.".format('.'.join([__name__, node.__name__]), sup))
 
-            iterable = (item for item in rest)
-            chunks = [item for item in zip(*(count * [iterable]))]
+            iterable = iter(rest)
+            chunks = list(zip(*(count * [iterable])))
 
             #length = le(chunks.pop(0))
             if len(chunks) != length:
@@ -1926,9 +1886,9 @@ class node(object):
     @classmethod
     def aflags(cls, ea):
         '''Return the additional flags for the instruction at the address `ea`.'''
-        NALT_AFLAGS = getattr(idaapi, 'NALT_AFLAGS', 8)
         if hasattr(idaapi, 'get_aflags'):
             return idaapi.get_aflags(ea)
+        NALT_AFLAGS = getattr(idaapi, 'NALT_AFLAGS', 8)
         return internal.netnode.alt.get(idaapi.ea2node(ea) if hasattr(idaapi, 'ea2node') else ea, NALT_AFLAGS)
     @internal.utils.multicase(ea=six.integer_types, mask=six.integer_types)
     @classmethod
@@ -2126,7 +2086,21 @@ class strpath(object):
                 arrayQ, hindex = msize != size, (size - 1) // msize
                 index, item = divmod(offset, msize) if arrayQ else (0, offset)
                 index, offset = (index, item) if index * msize < size or mptr.soff == mptr.eoff else (hindex, item + (offset - hindex * msize))
-                item = "{:s}{:s}{:s}".format(fullname if not result else name if owner.id == sptr.id else "{{ERR!{:s}|{:s}}}{:s}".format(sname, oname, name), "[{:d}]".format(index) if arrayQ else '', "({:+#x})".format(offset) if offset else '' if mptr else "{:+#x}".format(offset))
+                item = "{:s}{:s}{:s}".format(
+                    (
+                        name
+                        if owner.id == sptr.id
+                        else "{{ERR!{:s}|{:s}}}{:s}".format(sname, oname, name)
+                    )
+                    if result
+                    else fullname,
+                    "[{:d}]".format(index) if arrayQ else '',
+                    "({:+#x})".format(offset)
+                    if offset
+                    else ''
+                    if mptr
+                    else "{:+#x}".format(offset),
+                )
             elif sptr:
                 item = ''.join([internal.netnode.name.get(sptr.id), "({:+#x})".format(offset) if offset else ''])
             else:
@@ -2327,13 +2301,7 @@ class strpath(object):
 
             # If we know about this structure, then grab the element out of it and
             # adjust our offset by the delta we found within our suggestion.
-            if items:
-                mptr, delta = items.pop(0)
-
-            # If there's nothing to flail with, then carry with the default item.
-            else:
-                mptr, delta = None, 0
-
+            mptr, delta = items.pop(0) if items else (None, 0)
             # If our current item has an offset, then log that we're adjusting it.
             if mptr and carry != delta:
                 logging.debug(u"{:s}.flail([{:s}]) : The suggested path item {:s} does not match {:s} and its difference ({:+#x}) will likely be carried into the next member.".format('.'.join([__name__, cls.__name__]), "[{:s}]".format(', '.join(suggestion_description)), cls.format(sptr, mptr, delta), cls.format(sptr, None, carry), delta))
@@ -2347,7 +2315,7 @@ class strpath(object):
     @classmethod
     def of_tids(cls, offset, tids):
         '''Just a utility functions that uses the provided offset and a list of tids (`tid_array`) to return the complete path.'''
-        iterable = (tid for tid in tids)
+        iterable = iter(tids)
 
         # Start out by grabbing the first tid and converting it to an sptr before we start.
         sid = builtins.next(iterable, idaapi.BADADDR)
@@ -2355,7 +2323,6 @@ class strpath(object):
         if sptr is None:
             raise internal.exceptions.StructureNotFoundError(u"{:s}.of_tids({:#x}, {:s}) : Unable to find a structure for the given identifier ({:#x}).".format('.'.join([__name__, cls.__name__]), offset, "[{:s}]".format(', '.join(map("{:#x}".format, tids))), sid))
 
-        # Define a class that we'll use to aggregate our results from visit_stroff_fields.
         class visitor_t(idaapi.struct_field_visitor_t):
             def visit_field(self, sptr, mptr):
                 calculator.send((sptr, mptr, 0))
@@ -2459,7 +2426,7 @@ class strpath(object):
         # path that we'll apply to the operand. We also need to calculate the delta
         # so we'll just connect our collector to our calculator which will then
         # add any items that get processed to our items.
-        result, items = [], [item for item in suggestion]
+        result, items = [], list(suggestion)
         calculator = cls.calculate(0, result.append)
         collector = cls.collect(struc, calculator.send)
 
@@ -2515,7 +2482,9 @@ class strpath(object):
 
         # Now we can check for any issues that happened while collecting their path.
         suggested = (''.join(['.'.join(map("{:#x}".format, [sptr.id, mptr.id] if mptr else [sptr.id])), "{:+#x}".format(offset) if offset else '']) for sptr, mptr, offset in result)
-        suggestion_description = [item for item in itertools.chain(suggested, map("{!r}".format, items))]
+        suggestion_description = list(
+            itertools.chain(suggested, map("{!r}".format, items))
+        )
         if ok:
             [ logging.debug(u"{:s}.suggestion({:#x}, [{:s}]) : Successfully interpreted path suggestion at index {:d} as {:s}.".format('.'.join([__name__, cls.__name__]), struc.id, ', '.join(suggestion_description), index, cls.format(*item))) for index, item in enumerate(result) ]
 
@@ -2529,7 +2498,9 @@ class strpath(object):
     @classmethod
     def guide(cls, goal, struc, suggestion):
         '''This tries to determine a complete path from the sptr in `struc` to the offset `goal` using `suggestion` as a sloppy (sorta) guidance.'''
-        result, suggestion_description = [], [item for item in itertools.starmap(cls.format, suggestion)]
+        result, suggestion_description = [], list(
+            itertools.starmap(cls.format, suggestion)
+        )
 
         # Now we have the suggested path and the delta that they're aiming at. All
         # they really did was give us a suggestion as guidance, so we need to resolve
@@ -2624,7 +2595,7 @@ class strpath(object):
 
         # If our result is empty, then the path the user gave us didn't even come close to
         # the goal that they wanted. We did get a structure, though, so use it instead.
-        result if result else calculator.send([owner, None, carry])
+        result or calculator.send([owner, None, carry])
 
         # We should now have our result resolved so we can grab our delta to return it.
         delta, _ = builtins.next(calculator), calculator.close()
@@ -2647,11 +2618,11 @@ class tinfo(object):
     # Define a throwaway closure that we use for entering and recursing
     # into the location_table. This is needed because scattered types
     # are recursive, and we want to return everything that we can.
-    def process_location(atype, location, table):
-        F = table.get(atype, internal.utils.fidentity)
+    def process_location(self, location, table):
+        F = table.get(self, internal.utils.fidentity)
         if isinstance(location, idaapi.argpart_t):
-            return atype, (F(location), location.off, location.size)
-        return atype, F(location)
+            return self, (F(location), location.off, location.size)
+        return self, F(location)
 
     # Our first user of process_location which handles any argloc_t items
     # that are stored within an iterator based around a vector.
@@ -2683,19 +2654,15 @@ class tinfo(object):
         if loctype == idaapi.ALOC_STACK and not hasattr(locinfo, '__iter__'):
             return location_t(locinfo, size)
 
-        # This is just an address for the user to figure out on their own.
         elif loctype == idaapi.ALOC_STATIC:
             return locinfo
 
-        # A single register and its offset. Offset seems to only be used
-        # when using scattered (ALOC_DIST) argument location types.
         elif loctype == idaapi.ALOC_REG1 and not hasattr(locinfo, '__iter__'):
             ridx1, regoff = (locinfo & 0x0000ffff) >> 0, (locinfo & 0xffff0000) >> 16
             try: reg = architecture.by_indexsize(ridx1, size)
             except KeyError: reg = architecture.by_index(ridx1)
             return phrase_t(reg, regoff) if regoff else reg
 
-        # A pair of registers gets returned as a list since they're contiguous.
         elif loctype == idaapi.ALOC_REG2:
             ridx1, ridx2 = (locinfo & 0x0000ffff) >> 0, (locinfo & 0xffff0000) >> 16
             try: reg1 = architecture.by_indexsize(ridx1, size // 2)
@@ -2706,24 +2673,19 @@ class tinfo(object):
 
             return [reg1, reg2]
 
-        # Seems to be a value relative to a register (reg+off) which we return
-        # as a phrase_t if there's an offset, otherwise just the register.
         elif loctype in {idaapi.ALOC_RREL}:
             ridx, roff = locinfo
             try: reg = architecture.by_indexsize(ridx, size)
             except KeyError: reg = architecture.by_index(ridx)
             return phrase_t(reg, roff) if roff else reg
 
-        # Scattered shit should really just be a list of things, and we
-        # can just recurse into it in order to extract our results.
         elif loctype in {idaapi.ALOC_DIST}:
             F = lambda atype, item, offset, size: cls.location(size, architecture, atype, (item, offset, size))
             # XXX: we can't translate scattered_t because it's an empty vector
             #      and its stkoff() appears to be uninitialized.
             iterable = ( F(atype, *item) for atype, item in locinfo )
-            return { offset : item for offset, item in iterable }
+            return dict(iterable)
 
-        # ALOC_REG1, but for argpart_t as a key-value pair since we handle the original further up.
         elif loctype == idaapi.ALOC_REG1:
             locinfo, offset, size = locinfo
             ridx1, regoff = (locinfo & 0x0000ffff) >> 0, (locinfo & 0xffff0000) >> 16
@@ -2738,16 +2700,13 @@ class tinfo(object):
                 reg = partialregister_t(architecture.by_index(ridx1), 8 * regoff, 8 * size)
             return offset, reg
 
-        # This is ALOC_STACK, but for argpart_t we return it as a key-value pair.
         elif loctype == idaapi.ALOC_STACK:
             linfo, offset, size = locinfo
             return offset, location_t(linfo, size)
 
-        # Return None if there wasn't a location type.
         elif loctype in {idaapi.ALOC_NONE}:
             return
 
-        # FIXME: We're not supporting this because I've never used this fucker.
         elif loctype in {idaapi.ALOC_CUSTOM}:
             ltypes = {getattr(idaapi, attribute) : attribute for attribute in dir(idaapi) if attribute.startswith('ALOC_')}
             raise NotImplementedError(u"{:s}.location({!r}, {!r}, {:d}, {!r}, ...) : Unable to decode location of type {:s} that uses the specified information ({!s}).".format('.'.join([__name__, cls.__name__]), "{!s}".format(ti), architecture, loctype, locinfo, "{:s}({:d})".format(ltypes[loctype], loctype) if loctype in ltypes else "{:d}".format(loctype), locinfo))
@@ -2868,13 +2827,10 @@ class tinfo(object):
         # And dreamed of all the ways.. That I had to make her glow. Why are you
         # so far way, she said why won't you ever know..that I'm in love with you.
         # That I'm in love with you.
-        try:
+        with contextlib.suppress(GeneratorExit):
             while True:
                 ftd = yield (newinfo, ftd)
 
-        # ...and now we're safe.
-        except GeneratorExit:
-            pass
         return
 
 def tuplename(*names):
@@ -3119,10 +3075,8 @@ class register_t(symbol_t):
 
         # otherwise we need to look in our register index for the name.
         res = idaapi.ph.regnames
-        try:
+        with contextlib.suppress(ValueError):
             return res.index(self.realname or self.name)
-        except ValueError:
-            pass
         return -1
 
     @property
@@ -3187,7 +3141,7 @@ class register_t(symbol_t):
 
     def __contains__(self, other):
         '''Return true if the `other` register is any of the components of the current register.'''
-        viewvalues = {item for item in self.__children__.values()}
+        viewvalues = set(self.__children__.values())
         return other in viewvalues
 
     def subsetQ(self, other):
@@ -3200,7 +3154,7 @@ class register_t(symbol_t):
 
     def supersetQ(self, other):
         '''Return true if the `other` register uses the current register as a component.'''
-        res, pos = {item for item in []}, self
+        res, pos = set([]), self
         while pos is not None:
             res.add(pos)
             pos = pos.__parent__
@@ -3215,8 +3169,8 @@ class register_t(symbol_t):
         rv, rname = idaapi.regval_t(), self.name
         if not idaapi.get_reg_val(rname, rv):
             raise internal.exceptions.DisassemblerError(u"{!s} : Unable to fetch the integer value from the associated register name ({:s}).".format(self, rname))
-        mask = pow(2, self.bits) - 1
         if rv.rvtype == idaapi.RVT_INT:
+            mask = pow(2, self.bits) - 1
             return rv.ival & mask
         elif rv.rvtype == idaapi.RVT_FLOAT:
             logging.warning(u"{!s} : Converting a non-integer register type ({:d}) to an integer using {:d} bytes.".format(self, rv.rvtype, self.size))
@@ -3255,10 +3209,17 @@ class regmatch(object):
         if not regs:
             args = ', '.join(map(internal.utils.string.escape, regs))
             mods = internal.utils.string.kwargs(modifiers)
-            raise internal.exceptions.InvalidParameterError(u"{:s}({:s}{:s}) : The specified registers are empty.".format('.'.join([__name__, cls.__name__]), args, (', '+mods) if mods else ''))
+            raise internal.exceptions.InvalidParameterError(
+                u"{:s}({:s}{:s}) : The specified registers are empty.".format(
+                    '.'.join([__name__, cls.__name__]),
+                    args,
+                    f', {mods}' if mods else '',
+                )
+            )
         use, iterops = cls.use(regs), cls.modifier(**modifiers)
         def match(ea):
             return any(map(functools.partial(use, ea), iterops(ea)))
+
         return match
 
     @classmethod
@@ -3275,9 +3236,7 @@ class regmatch(object):
         # returns true if the operand at the specified address is related to one of the registers in `regs`.
         def uses_register(ea, opnum):
             val = _instruction.op(ea, opnum)
-            if isinstance(val, symbol_t):
-                return any(map(match, val.symbols))
-            return False
+            return any(map(match, val.symbols)) if isinstance(val, symbol_t) else False
 
         return uses_register
 
@@ -3357,33 +3316,32 @@ class reftype_t(object):
     def __hash__(self):
         return hash(self.F)
     def __or__(self, other):
-        return self.__operator__(operator.or_, {item for item in other})
+        return self.__operator__(operator.or_, set(other))
     def __and__(self, other):
-        return self.__operator__(operator.and_, {item for item in other})
+        return self.__operator__(operator.and_, set(other))
     def __xor__(self, other):
-        return self.__operator__(operator.xor, {item for item in other})
+        return self.__operator__(operator.xor, set(other))
     def __eq__(self, other):
-        return self.__operator__(operator.eq, {item for item in other})
+        return self.__operator__(operator.eq, set(other))
     def __ne__(self, other):
-        return self.__operator__(operator.ne, {item for item in other})
+        return self.__operator__(operator.ne, set(other))
     def __sub__(self, other):
-        return self.__operator__(operator.sub, {item for item in other})
+        return self.__operator__(operator.sub, set(other))
     def __contains__(self, type):
         if isinstance(type, six.integer_types):
             res = self.F & type
         else:
             res = operator.contains(self.S, type.lower())
-        return True if res else False
+        return bool(res)
     def __getitem__(self, type):
         if isinstance(type, six.integer_types):
             res = self.F & type
         else:
             res = operator.contains(self.S, type.lower())
-        return True if res else False
+        return bool(res)
 
     def __iter__(self):
-        for item in sorted(self.S):
-            yield item
+        yield from sorted(self.S)
         return
 
     def __repr__(self):
@@ -3392,7 +3350,7 @@ class reftype_t(object):
     def __init__(self, xrtype, iterable):
         '''Construct a ``reftype_t`` using `xrtype` and any semantics specified in `iterable`.'''
         self.F = xrtype
-        self.S = { item for item in iterable }
+        self.S = set(iterable)
 
     @classmethod
     def of_type(cls, xrtype):
@@ -3400,7 +3358,7 @@ class reftype_t(object):
         if not isinstance(xrtype, six.integer_types):
             raise internal.exceptions.InvalidTypeOrValueError(u"{:s}.of_type({!r}) : Refusing the coercion of a non-integral {!s} into the required type ({!s}).".format('.'.join([__name__, cls.__name__]), xrtype, xrtype.__class__, 'xrtype'))
         items = cls.__mapper__.get(xrtype, '')
-        iterable = (item for item in items)
+        iterable = iter(items)
         return cls(xrtype, iterable)
     of = of_type
 
@@ -3414,15 +3372,15 @@ class reftype_t(object):
 
         # Verify that the state we were given can be iterated through.
         try:
-            (item for item in state)
+            iter(state)
 
         except TypeError:
             raise internal.exceptions.InvalidTypeOrValueError(u"{:s}.of_action({!r}) : Unable to coerce the requested state ({!r}) into a valid cross-reference type ({!s}).".format('.'.join([__name__, cls.__name__]), state, state, cls.__name__))
 
         # Search through our mapper for the correct contents of the reftype_t.
-        res = { item for item in state }
+        res = set(state)
         for F, t in cls.__mapper__.items():
-            if { item for item in t } == res:
+            if set(t) == res:
                 return cls(F, res)
             continue
         resP = str().join(sorted(res))
@@ -3538,12 +3496,9 @@ class switch_t(object):
         # the jcases property.
         if self.indirectQ():
             ea, count = self.object.jumps, self.object.jcases
-            items = database.get.array(ea, length=count)
-
-        # otherwise, we'll need to use the ncases property for the count.
         else:
             ea, count = self.object.jumps, self.object.ncases
-            items = database.get.array(ea, length=count)
+        items = database.get.array(ea, length=count)
 
         # check that the result is a proper array with a typecode.
         if not hasattr(items, 'typecode'):
@@ -3796,20 +3751,24 @@ class architecture_t(object):
         # older
         if idaapi.__version__ < 7.0:
             dtype_by_size = internal.utils.fcompose(idaapi.get_dtyp_by_size, six.byte2int)
-            dt_bitfield = idaapi.dt_bitfild
-        # newer
         else:
             dtype_by_size = idaapi.get_dtype_by_size
-            dt_bitfield = idaapi.dt_bitfild
-
+        dt_bitfield = idaapi.dt_bitfild
         #dtyp = kwargs.get('dtyp', idaapi.dt_bitfild if bits == 1 else dtype_by_size(bits//8))
         dtype = builtins.next((kwargs[item] for item in ['dtyp', 'dtype', 'type'] if item in kwargs), dt_bitfield if bits == 1 else dtype_by_size(bits // 8))
         ptype = builtins.next((kwargs[item] for item in ['ptype'] if item in kwargs), int)
 
-        namespace = {key : value for key, value in register_t.__dict__.items()}
-        namespace.update({'__name__':name, '__parent__':None, '__children__':{}, '__dtype__':dtype, '__position__':0, '__size__':bits, '__ptype__':ptype})
+        namespace = dict(register_t.__dict__.items()) | {
+            '__name__': name,
+            '__parent__': None,
+            '__children__': {},
+            '__dtype__': dtype,
+            '__position__': 0,
+            '__size__': bits,
+            '__ptype__': ptype,
+        }
         namespace['realname'] = idaname
-        namespace['alias'] = kwargs.get('alias', {item for item in []})
+        namespace['alias'] = kwargs.get('alias', set([]))
         namespace['architecture'] = self
         res = type(name, (register_t,), namespace)()
         self.__register__.__state__[name] = res
@@ -3823,20 +3782,24 @@ class architecture_t(object):
         # older
         if idaapi.__version__ < 7.0:
             dtype_by_size = internal.utils.fcompose(idaapi.get_dtyp_by_size, six.byte2int)
-            dt_bitfield = idaapi.dt_bitfild
-        # newer
         else:
             dtype_by_size = idaapi.get_dtype_by_size
-            dt_bitfield = idaapi.dt_bitfild
-
+        dt_bitfield = idaapi.dt_bitfild
         dtype = builtins.next((kwargs[item] for item in ['dtyp', 'dtype', 'type'] if item in kwargs), dt_bitfield if bits == 1 else dtype_by_size(bits // 8))
         #dtyp = kwargs.get('dtyp', idaapi.dt_bitfild if bits == 1 else dtype_by_size(bits//8))
         ptype = builtins.next((kwargs[item] for item in ['ptype'] if item in kwargs), int)
 
-        namespace = {key : value for key, value in register_t.__dict__.items() }
-        namespace.update({'__name__':name, '__parent__':parent, '__children__':{}, '__dtype__':dtype, '__position__':position, '__size__':bits, '__ptype__':ptype})
+        namespace = dict(register_t.__dict__.items()) | {
+            '__name__': name,
+            '__parent__': parent,
+            '__children__': {},
+            '__dtype__': dtype,
+            '__position__': position,
+            '__size__': bits,
+            '__ptype__': ptype,
+        }
         namespace['realname'] = idaname
-        namespace['alias'] = kwargs.get('alias', {item for item in []})
+        namespace['alias'] = kwargs.get('alias', set([]))
         namespace['architecture'] = self
         res = type(name, (register_t,), namespace)()
         self.__register__.__state__[name] = res
@@ -3892,11 +3855,10 @@ class architecture_t(object):
     def promote(self, register, bits=None):
         '''Promote the specified `register` to its next larger size as specified by `bits`.'''
         parent = internal.utils.fcompose(operator.attrgetter('__parent__'), (lambda *items: items), functools.partial(filter, None), iter, next)
-        try:
+        with contextlib.suppress(StopIteration):
             if bits is None:
                 return parent(register)
             return register if register.bits == bits else self.promote(parent(register), bits=bits)
-        except StopIteration: pass
         cls = self.__class__
         if bits is None:
             raise internal.exceptions.RegisterNotFoundError(u"{:s}.promote({!s}{:s}) : Unable to promote the specified register ({!s}) to a size larger than {!r}.".format('.'.join([cls.__module__, cls.__name__]), register, '' if bits is None else ", bits={:d}".format(bits), register, register))
@@ -3907,11 +3869,10 @@ class architecture_t(object):
         childitems = internal.utils.fcompose(operator.attrgetter('__children__'), operator.methodcaller('items'))
         firsttype = internal.utils.fcompose(childitems, lambda items: ((key, value) for key, value in items if key[1] == type), iter, next, operator.itemgetter(1))
         firstchild = internal.utils.fcompose(childitems, functools.partial(sorted, key=internal.utils.fcompose(operator.itemgetter(0), operator.itemgetter(0))), iter, next, operator.itemgetter(1))
-        try:
+        with contextlib.suppress(StopIteration):
             if bits is None:
                 return firstchild(register)
             return register if register.bits == bits else self.demote(firstchild(register), bits=bits)
-        except StopIteration: pass
         cls = self.__class__
         if bits is None:
             raise internal.exceptions.RegisterNotFoundError(u"{:s}.demote({!s}{:s}) : Unable to demote the specified register ({!s}) to a size smaller than {!r}.".format('.'.join([cls.__module__, cls.__name__]), register, '' if bits is None else ", bits={:d}".format(bits), register, register))
@@ -3934,7 +3895,7 @@ class bounds_t(integerish):
         # create a mapping containing our individual fields given with our
         # arguments. the keyword parameters are given secondary priority to
         # any argument parameters.
-        fields = {fld : item for fld, item in zip(cls._fields, args)}
+        fields = dict(zip(cls._fields, args))
         [ fields.setdefault(fld, kwargs.pop(fld)) for fld in cls._fields if fld in kwargs ]
 
         # if the size was provided, then we can use it to calculate the
@@ -3951,7 +3912,7 @@ class bounds_t(integerish):
         if len(kwargs):
             raise TypeError("{!s}() got unexpected keyword argument{:s} {:s}".format(cls.__name__, '' if len(kwargs) == 1 else 's', ', '.join(map("'{!s}'".format, kwargs))))
         if any(item not in fields for item in cls._fields):
-            available, required = ({item for item in items} for items in [fields, cls._fields])
+            available, required = (set(items) for items in [fields, cls._fields])
             missing = required - available
             raise TypeError("{!s}() is missing required field{:s} {:s}".format(cls.__name__, '' if len(missing) == 1 else 's', ', '.join(map("'{!s}'".format, (item for item in cls._fields if item in missing)))))
 
@@ -4141,11 +4102,7 @@ class location_t(integerish):
         offset, size = self
 
         # if our size is in the typemap's integermap, then we can simply use it.
-        if size in typemap.integermap:
-            return int, size
-
-        # otherwise, we need to form ourselves into an array of bytes.
-        return [(int, 1), size]
+        return (int, size) if size in typemap.integermap else [(int, 1), size]
 
     @property
     def bounds(self):

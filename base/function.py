@@ -557,8 +557,7 @@ class chunks(object):
         '''Yield the `(address, delta)` for each stack point where the delta changes in the function `func`.'''
         fn = by(func)
         for ch, _ in cls(fn):
-            for ea, delta in chunk.points(fn, ch):
-                yield ea, delta
+            yield from chunk.points(fn, ch)
             continue
         return
     stackpoints = utils.alias(points, 'chunks')
@@ -601,7 +600,7 @@ class chunk(object):
     def owner(cls, ea):
         '''Return the primary owner of the function chunk containing the address specified by `ea`.'''
         if within(ea):
-            return next(item for item in cls.owners(ea))
+            return next(iter(cls.owners(ea)))
         raise E.FunctionNotFoundError(u"{:s}.owner({:#x}) : Unable to locate a function at the specified address ({:#x}).".format('.'.join([__name__, cls.__name__]), ea, ea))
     @utils.multicase(bounds=tuple)
     @classmethod
@@ -631,7 +630,7 @@ class chunk(object):
     def owners(cls):
         '''Yield each of the owners which have the current function chunk associated with it.'''
         ea = ui.current.address()
-        return (item for item in cls.owners(ea))
+        return iter(cls.owners(ea))
     @utils.multicase(ea=six.integer_types)
     @classmethod
     def owners(cls, ea):
@@ -683,24 +682,21 @@ class chunk(object):
                 logging.warning(u"{:s}.owners({:#x}) : Expected to find {:d} referrer{:s} for the function tail at {!s}, but {:s}{:s} returned.".format('.'.join([__name__, cls.__name__]), ea, count, '' if count == 1 else 's', bounds, 'only ' if len(referrers) < count else '', "{:d} was".format(len(referrers)) if len(referrers) == 1 else "{:d} were".format(len(referrers))))
 
             # That was it, we just need to convert our results to an iterator.
-            iterable = (ea for ea in referrers)
+            iterable = iter(referrers)
 
-        # Otherwise, we just need to yield the function that owns this chunk.
         else:
             iterable = (ea for ea, _ in [owner])
 
         # We've collected all of our items, so iterate through what we've collected
         # and then yield them to the caller before returning.
-        for ea in iterable:
-            yield ea
+        yield from iterable
         return
 
     @utils.multicase()
     @classmethod
     def iterate(cls):
         '''Iterate through all the instructions for the function chunk containing the current address.'''
-        for ea in cls.iterate(ui.current.address()):
-            yield ea
+        yield from cls.iterate(ui.current.address())
         return
     @utils.multicase(ea=six.integer_types)
     @classmethod
@@ -1034,7 +1030,7 @@ class blocks(object):
 
         # Take the range we were given, and return it as a list.
         (left, _), (_, right) = map(interface.range.unpack, map(cls.at, [left, right]))
-        return [ bounds for bounds in filtered(left, right) ]
+        return list(filtered(left, right))
 
     @utils.multicase()
     @classmethod
@@ -1059,7 +1055,7 @@ class blocks(object):
     def iterate(cls, func, flags, **silent):
         '''Returns each ``idaapi.BasicBlock`` from the flowchart built with the specified `flags` (``idaapi.FC_*``) for the function `func`.'''
         fn, FC_CALL_ENDS, has_calls = by(func), getattr(idaapi, 'FC_CALL_ENDS', 0x20), hasattr(idaapi, 'FC_CALL_ENDS')
-        boundaries = [bounds for bounds in chunks(fn)]
+        boundaries = list(chunks(fn))
 
         # iterate through all the basic-blocks in the flow chart and yield
         # each of them back to the caller. we need to ensure that the bounds
@@ -1079,24 +1075,15 @@ class blocks(object):
                     start = right
 
                 # if the addresses are diffrent, then we have one more block to yield.
-                if start < stop:
+                if start < stop or start == stop and not locations:
                     yield idaapi.BasicBlock(bb.id, interface.range.pack(start, stop), bb._fc)
 
-                # if they're the same and we didn't have to chop it up, then this is external.
-                elif start == stop and not locations:
-                    yield idaapi.BasicBlock(bb.id, interface.range.pack(start, stop), bb._fc)
-
-            # if we've been asked to be silent, then just yield what we got.
             elif silent.get('silent', False):
                 yield bb
 
-            # unpack the boundaries of the basic block to verify it's in one
-            # of them, so that way we can yield it to the user if so.
             elif any(start <= ea <= stop for start, stop in boundaries) and left != right:
                 yield bb
 
-            # otherwise warn the user about it just in case they're processing
-            # them and are always expecting an address within the function.
             else:
                 f, api, Flogging = interface.range.start(fn), idaapi.FlowChart, logging.warning if flags & idaapi.FC_NOEXT else logging.info
                 Flogging(u"{:s}.iterate({:#x}, {:#x}{:s}) : The current block {!s} ({:s}) being returned by `{:s}` is outside the boundaries of the requested function ({:#x}).".format('.'.join([__name__, cls.__name__]), f, flags, ", {:s}".format(utils.string.kwargs(silent)) if silent else '', bb, bounds, '.'.join([api.__module__, api.__name__]), f))
@@ -1178,7 +1165,7 @@ class blocks(object):
     @classmethod
     def traverse(cls, bb, predicate):
         '''Traverse the blocks of function `func` from the ``idaapi.BasicBlock`` given by `bb` until the callable `predicate` returns no more elements.'''
-        visited = {item for item in []}
+        visited = set([])
 
         # define a closure containing the core of our functionality.
         def Fchoose(item, items, bb=bb, visited=visited):
@@ -1187,30 +1174,30 @@ class blocks(object):
                 if len(filtered) != len(items):
                     removed = [bounds for bounds in items if bounds in visited]
                     logging.warning(u"{:s}.traverse({!s}) : Discarded {:d} already visited block{:s} ({:s}) leaving only {:d} ({:s}) to choose a default from.".format('.'.join([__name__, cls.__name__]), bb, len(removed), '' if len(removed) == 1 else 's', ', '.join(map("{:s}".format, removed)), len(filtered), ', '.join(map("{:s}".format, filtered))))
-                iterable = (choice for choice in filtered[:1])
+                iterable = iter(filtered[:1])
             elif isinstance(item, six.integer_types):
                 iterable = (choice for choice in choices if choice.contains(item))
             elif item in items:
-                iterable = (choice for choice in [item])
+                iterable = iter([item])
             else:
-                iterable = (choice for choice in [])
+                iterable = iter([])
 
             # grab our result and error out if its an integer and didn't match a block.
             result = builtins.next(iterable, None)
-            if result is None and isinstance(item, six.integer_types):
-                message = 'any of the available blocks' if len(items) > 1 else 'the only available block'
-                raise E.ItemNotFoundError(u"{:s}.traverse({!s}) : The specified address ({:#x}) is not within {:s} ({:s}).".format('.'.join([__name__, cls.__name__]), bb, item, message, ', '.join(map("{:s}".format, items))))
+            if result is None:
+                if isinstance(item, six.integer_types):
+                    message = 'any of the available blocks' if len(items) > 1 else 'the only available block'
+                    raise E.ItemNotFoundError(u"{:s}.traverse({!s}) : The specified address ({:#x}) is not within {:s} ({:s}).".format('.'.join([__name__, cls.__name__]), bb, item, message, ', '.join(map("{:s}".format, items))))
 
-            # otherwise, it was something else, and we couldn't match it.
-            elif result is None:
-                item_descr = interface.bounds_t(*item) if isinstance(item, tuple) else "{!s}".format(item)
-                message = 'is not one of the available choices' if len(items) > 1 else 'does not match the only available block'
-                raise E.ItemNotFoundError(u"{:s}.traverse({!s}) : The specified block ({:s}) {:s} ({:s}).".format('.'.join([__name__, cls.__name__]), bb, item_descr, message, ', '.join(map("{:s}".format, items))))
+                else:
+                    item_descr = interface.bounds_t(*item) if isinstance(item, tuple) else "{!s}".format(item)
+                    message = 'is not one of the available choices' if len(items) > 1 else 'does not match the only available block'
+                    raise E.ItemNotFoundError(u"{:s}.traverse({!s}) : The specified block ({:s}) {:s} ({:s}).".format('.'.join([__name__, cls.__name__]), bb, item_descr, message, ', '.join(map("{:s}".format, items))))
             return result
 
         # start out with the basic-block we were given, and use it for each decision.
         available = {interface.range.bounds(bb) : bb}
-        choices = [item for item in available]
+        choices = list(available)
 
         # continue while we still have choices to choose from.
         while len(choices):
@@ -1218,7 +1205,7 @@ class blocks(object):
             choice = Fchoose(selected, choices)
             items, _ = predicate(available[choice]), visited.add(choice)
             available = {interface.range.bounds(item) : item for item in items}
-            choices = [item for item in available]
+            choices = list(available)
         return
 
     @utils.multicase()
@@ -1345,24 +1332,24 @@ class blocks(object):
     @utils.string.decorate_arguments('tag', 'And', 'Or')
     def select(cls, tag, *Or, **boolean):
         '''Query the basic blocks of the current function for the specified `tag` and any others specified as `Or`.'''
-        res = {tag} | {item for item in Or}
-        boolean['Or'] = {item for item in boolean.get('Or', [])} | res
+        res = {tag} | set(Or)
+        boolean['Or'] = set(boolean.get('Or', [])) | res
         return cls.select(ui.current.function(), **boolean)
     @utils.multicase(tag=six.string_types)
     @classmethod
     @utils.string.decorate_arguments('tag', 'And', 'Or')
     def select(cls, func, tag, *Or, **boolean):
         '''Query the basic blocks of the function `func` for the specified `tag` and any others specified as `Or`.'''
-        res = {tag} | {item for item in Or}
-        boolean['Or'] = {item for item in boolean.get('Or', [])} | res
+        res = {tag} | set(Or)
+        boolean['Or'] = set(boolean.get('Or', [])) | res
         return cls.select(func, **boolean)
     @utils.multicase(tag=(builtins.set, builtins.list))
     @classmethod
     @utils.string.decorate_arguments('tag', 'And', 'Or')
     def select(cls, func, tag, *Or, **boolean):
         '''Query the basic blocks of the function `func` for the specified `tag` and any others specified as `Or`.'''
-        res = {item for item in tag} | {item for item in Or}
-        boolean['Or'] = {item for item in boolean.get('Or', [])} | res
+        res = set(tag) | set(Or)
+        boolean['Or'] = set(boolean.get('Or', [])) | res
         return cls.select(func, **boolean)
     @utils.multicase()
     @classmethod
@@ -1377,17 +1364,24 @@ class blocks(object):
 
         # Turn all of our parameters into a dict of sets that we can iterate through.
         containers = (builtins.tuple, builtins.set, builtins.list)
-        boolean = {key : {item for item in value} if isinstance(value, containers) else {value} for key, value in boolean.items()}
+        boolean = {
+            key: set(value) if isinstance(value, containers) else {value}
+            for key, value in boolean.items()
+        }
 
         # Grab the addresses that are actually tagged into a set, and then the basic
         # blocks in an ordered dictionary so that we can union them for our results.
-        available = {ea for ea in internal.comment.contents.address(interface.range.start(target), target=interface.range.start(target))}
+        available = set(
+            internal.comment.contents.address(
+                interface.range.start(target), target=interface.range.start(target)
+            )
+        )
         order, iterable = [], ((item, interface.range.bounds(item)) for item in blocks.iterate(target, flags))
         results = {bounds.left : [order.append(bounds.left), item].pop(1) for item, bounds in iterable }
 
         # Now we just need to union both our tagged addresses with the ones which
         # are basic-blocks to get a list of the selected addresses.
-        selected = {ea for ea in available} & {ea for ea in order}
+        selected = set(available) & set(order)
         ordered = [ea for ea in order if ea in selected]
 
         # If nothing specific was queried, then iterate through our ordered
@@ -1395,12 +1389,12 @@ class blocks(object):
         if not boolean:
             for ea in ordered:
                 ui.navigation.analyze(ea)
-                address = database.tag(ea)
-                if address: yield interface.range.bounds(results[ea]), address
+                if address := database.tag(ea):
+                    yield interface.range.bounds(results[ea]), address
             return
 
         # Collect the tagnames being queried as specified by the user.
-        Or, And = ({item for item in boolean.get(B, [])} for B in ['Or', 'And'])
+        Or, And = (set(boolean.get(B, [])) for B in ['Or', 'And'])
 
         # Walk through every tagged address and cross-check it against the query.
         for ea in ordered:
@@ -1408,12 +1402,12 @@ class blocks(object):
             collected, address = {}, database.tag(ea)
 
             # Or(|) includes any of the tagnames that were selected.
-            collected.update({key : value for key, value in address.items() if key in Or})
+            collected |= {key : value for key, value in address.items() if key in Or}
 
             # And(&) includes tags only if the address includes all of the specified tagnames.
             if And:
                 if And & six.viewkeys(address) == And:
-                    collected.update({key : value for key, value in address.items() if key in And})
+                    collected |= {key : value for key, value in address.items() if key in And}
                 else: continue
 
             # If anything was collected (matched), then yield the block and the matching tags.
@@ -1436,7 +1430,7 @@ class blocks(object):
         ea = interface.range.start(fn)
 
         # assign some default values and create some tools to use when creating the graph
-        availableChunks = [item for item in chunks(ea)]
+        availableChunks = list(chunks(ea))
 
         # create digraph
         import networkx
@@ -1461,7 +1455,7 @@ class blocks(object):
         G = networkx.DiGraph(name=name(ea), **attrs)
 
         # assign some default values, and create some tools to use when adding nodes
-        empty = {item for item in []}
+        empty = set([])
         fVisibleTags = lambda items: {tag for tag in items if not tag.startswith('__')}
 
         # create a node for each block in the flowchart
@@ -1471,13 +1465,11 @@ class blocks(object):
 
             # check if the boundary is zero-sized and handle it differently if so.
             if bounds.size:
-                items = [item for item in database.address.iterate(bounds)]
+                items = list(database.address.iterate(bounds))
                 last = database.address.prev(bounds.right)
 
-            # as the boundaries are defining an empty basic-block, we only need
-            # to find the one address that it's actually pointing to.
             else:
-                items = [item for item in {bound for bound in bounds}]
+                items = list(set(bounds))
                 last, = items
 
             # figure out all of the tags in the list of addresses (items).
@@ -1508,7 +1500,10 @@ class blocks(object):
                 operator.setitem(attrs, '__color__', block.color(bounds))
 
             visibletags = [fVisibleTags(t) for t in tags]
-            attrs.setdefault('__tags__', [item for item in functools.reduce(operator.or_, visibletags, empty)])
+            attrs.setdefault(
+                '__tags__',
+                list(functools.reduce(operator.or_, visibletags, empty)),
+            )
 
             # convert some of the attributes to dot
             operator.setitem(attrs, 'id', "{:#x}".format(bounds.left))
@@ -1601,7 +1596,9 @@ class blocks(object):
 
         Requires the ``networkx`` module in order to build the graph.
         """
-        g, exits = cls.digraph(func), {item for item in exits} if hasattr(exits, '__iter__') else {exits}
+        g, exits = cls.digraph(func), set(exits) if hasattr(
+            exits, '__iter__'
+        ) else {exits}
         start_block = block(start).left
         exit_blocks = { item.left for item in map(block, exits) }
 
@@ -2264,8 +2261,7 @@ class block(object):
         res = []
         # FIXME: This has been pretty damn unstable in my tests.
         try:
-            for fmt in formatted:
-                res.append( fmt.print1(source.__deref__()) )
+            res.extend(fmt.print1(source.__deref__()) for fmt in formatted)
         except TypeError: pass
         res = map(idaapi.tag_remove, res)
         return '\n'.join(map(utils.string.of, res))
@@ -2324,10 +2320,10 @@ class frame(object):
         """
         fn = by(func)
         _r = database.config.bits() // 8
-        ok = idaapi.add_frame(fn, lvars, regs - _r, args)
-        if not ok:
+        if ok := idaapi.add_frame(fn, lvars, regs - _r, args):
+            return cls(fn)
+        else:
             raise E.DisassemblerError(u"{:s}.new({:#x}, {:+#x}, {:+#x}, {:+#x}) : Unable to use `idaapi.add_frame({:#x}, {:d}, {:d}, {:d})` to add a frame to the specified function.".format('.'.join([__name__, cls.__name__]), interface.range.start(fn), lvars, regs - _r, args, interface.range.start(fn), lvars, regs - _r, args))
-        return cls(fn)
 
     @utils.multicase()
     @classmethod
@@ -2383,6 +2379,10 @@ class frame(object):
             '''Yield the `(offset, name, size)` of each argument belonging to the function `func`.'''
             _, ea = interface.addressOfRuntimeOrStatic(func)
 
+            # our results shouldn't have duplicates, but they might. actually,
+            # our results could technically be overlapping too. still, this is
+            # just to priority the tinfo_t and we only care about the stkoff.
+            locations = {}
             # first we'll need to check if there's a tinfo_t for the address to
             # give it priority over the frame. then we can grab its details.
             if database.type.has_typeinfo(ea):
@@ -2405,10 +2405,6 @@ class frame(object):
                     stkoff = loc.stkoff()
                     items.append((index, stkoff, utils.string.of(arg.name), arg.type))
 
-                # our results shouldn't have duplicates, but they might. actually,
-                # our results could technically be overlapping too. still, this is
-                # just to priority the tinfo_t and we only care about the stkoff.
-                locations = {}
                 for index, offset, name, tinfo in items:
                     if operator.contains(locations, offset):
                         old_index, old_name, _ = locations[offset]
@@ -2418,21 +2414,13 @@ class frame(object):
                 # that was it, we have our locations and we can proceed.
                 locations = locations
 
-            # if there was no type information, then we have no locations to reference.
-            else:
-                locations = {}
-
             # now we need to check if our address actually includes a frame. if it
             # doesn't, then we need to explicitly process our locations here.
             fr, results = idaapi.get_frame(ea), []
             if fr is None:
-                items = [offset for offset in locations]
+                items = list(locations)
 
-                # before we do anything, we need to figure out our lowest offset
-                # so that we can return the unnamed members that will exist in
-                # between our $pc and any actual args allocated on the stack.
-                delta = min(locations) if locations else 0
-                if delta:
+                if delta := min(locations, default=0):
                     results.append((0, None, delta))
 
                 # now we can iterate through all our locations and yield each one.
@@ -2441,7 +2429,6 @@ class frame(object):
                     results.append((offset, name or None, ti.get_size()))
                 return results
 
-            # to proceed, we need to know the function to get its frame sizes.
             else:
                 fn = idaapi.get_func(ea)
 
@@ -2513,7 +2500,7 @@ class frame(object):
             items = idaapi.get_arg_addrs(ea)
             if items is None:
                 raise E.DisassemblerError(u"{:s}.location({:#x}) : Unable to retrieve the initialization addresses for the arguments to the function call at {:#x}.".format('.'.join([__name__, cls.__name__]), ea, ea))
-            return [ea for ea in items]
+            return list(items)
         @utils.multicase(ea=six.integer_types, index=six.integer_types)
         @classmethod
         def location(cls, ea, index):

@@ -73,10 +73,11 @@ def __iterate__(**type):
         seg = idaapi.getnseg(index)
         seg.index, _ = index, ui.navigation.set(interface.range.start(seg))
         return seg
+
     iterable = (newsegment(index) for index in builtins.range(idaapi.get_segm_qty()))
     for key, value in (type or {'predicate': utils.fconstant(True)}).items():
-        iterable = (item for item in __matcher__.match(key, value, iterable))
-    for item in iterable: yield item
+        iterable = iter(__matcher__.match(key, value, iterable))
+    yield from iterable
 
 @utils.multicase(string=six.string_types)
 @utils.string.decorate_arguments('string')
@@ -164,7 +165,7 @@ def by(**type):
     searchstring = utils.string.kwargs(type)
     get_segment_name = idaapi.get_segm_name if hasattr(idaapi, 'get_segm_name') else idaapi.get_true_segm_name
 
-    listable = [item for item in __iterate__(**type)]
+    listable = list(__iterate__(**type))
     if len(listable) > 1:
         maxaddr = max(builtins.map(interface.range.end, listable) if listable else [1])
         caddr = utils.string.digits(maxaddr, 16)
@@ -172,7 +173,7 @@ def by(**type):
         [ logging.info(msg) for msg in messages ]
         logging.warning(u"{:s}.by({:s}) : Found {:d} matching results. Returning the first segment at index {:d} from {:0{:d}x}<>{:0{:d}x} with the name {:s} and size {:+#x}.".format(__name__, searchstring, len(listable), listable[0].index, interface.range.start(listable[0]), math.trunc(caddr), interface.range.end(listable[0]), math.trunc(caddr), utils.string.of(get_segment_name(listable[0])), listable[0].size()))
 
-    iterable = (item for item in listable)
+    iterable = iter(listable)
     res = builtins.next(iterable, None)
     if res is None:
         raise E.SearchResultsError(u"{:s}.by({:s}) : Found 0 matching results.".format(__name__, searchstring))
@@ -220,8 +221,7 @@ def iterate(segment):
 def iterate(segment):
     '''Iterate through all of the addresses within the ``idaapi.segment_t`` represented by `segment`.'''
     left, right = interface.range.unpack(segment)
-    for ea in database.address.iterate(left, right):
-        yield ea
+    yield from database.address.iterate(left, right)
     return
 
 @utils.multicase()
@@ -480,10 +480,10 @@ def load(filename, ea, size=None, offset=0, **kwds):
     filesize = os.stat(filename).st_size
 
     cb = filesize - offset if size is None else size
-    res = __load_file(utils.string.to(filename), ea, cb, offset)
-    if not res:
+    if res := __load_file(utils.string.to(filename), ea, cb, offset):
+        return new(ea, cb, kwds.get('name', os.path.split(filename)[1]))
+    else:
         raise E.ReadOrWriteError(u"{:s}.load({!r}, {:#x}, {:+#x}, {:#x}{:s}) : Unable to load file into {:#x}{:+#x} from \"{:s}\".".format(__name__, filename, ea, cb, offset, u", {:s}".format(utils.string.kwargs(kwds)) if kwds else '', ea, cb, utils.string.escape(os.path.relpath(filename), '"')))
-    return new(ea, cb, kwds.get('name', os.path.split(filename)[1]))
 
 def map(ea, size, newea, **kwds):
     """Map `size` bytes of data from `ea` into a new segment at `newea`.
@@ -496,13 +496,11 @@ def map(ea, size, newea, **kwds):
     if len(data) != size:
         raise E.ReadOrWriteError(u"{:s}.map({:#x}, {:+#x}, {:#x}{:s}) : Unable to read {:#x} bytes from {:#x}.".format(__name__, ea, size, newea, u", {:s}".format(utils.string.kwargs(kwds)) if kwds else '', size, ea))
 
-    # rebase the data to the new address
-    res = idaapi.mem2base(data, newea, fpos)
-    if not res:
+    if res := idaapi.mem2base(data, newea, fpos):
+        # now we can create the new segment
+        return new(newea, size, kwds.get("name", "map_{:x}".format(ea)))
+    else:
         raise E.DisassemblerError(u"{:s}.map({:#x}, {:+#x}, {:#x}{:s}) : Unable to remap {:#x}:{:+#x} to {:#x}.".format(__name__, ea, size, newea, u", {:s}".format(utils.string.kwargs(kwds)) if kwds else '', ea, size, newea))
-
-    # now we can create the new segment
-    return new(newea, size, kwds.get("name", "map_{:x}".format(ea)))
     #return create(newea, size, kwds.get("name", "map_{:s}".format(newea>>4)))
 
 # creation/destruction

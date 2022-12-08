@@ -165,10 +165,12 @@ def opinfo(ea, opnum, info, **flags):
 
     If any `flags` have been specified, then also set the operand's flags to the provided value.
     """
-    ok = idaapi.set_opinfo(ea, opnum, flags.get('flags', database.type.flags(ea)), info)
-    if not ok:
+    if ok := idaapi.set_opinfo(
+        ea, opnum, flags.get('flags', database.type.flags(ea)), info
+    ):
+        return opinfo(ea, opnum)
+    else:
         raise E.DisassemblerError(u"{:s}.opinfo({:#x}, {:d}, {!s}) : Unable to set the operand info for operand {:d}.".format(__name__, ea, opnum, info, opnum))
-    return opinfo(ea, opnum)
 
 @utils.multicase()
 def mnemonic():
@@ -212,7 +214,7 @@ def operands(ea):
 
     # apparently idaapi is not increasing a reference count for our operands, so we
     # need to make a copy of them quickly before we access them.
-    operands = [idaapi.op_t() for index in range(idaapi.UA_MAXOP)]
+    operands = [idaapi.op_t() for _ in range(idaapi.UA_MAXOP)]
     [ op.assign(insn.ops[index]) for index, op in enumerate(operands)]
 
     # now we can just fetch them until idaapi.o_void
@@ -960,12 +962,11 @@ def op_stackvar(ea, opnum):
     if not function.within(ea):
         raise E.FunctionNotFoundError(u"{:s}.op_stackvar({:#x}, {:d}) : The specified address ({:#x}) is not within a function.".format(__name__, ea, opnum, ea))
 
-    ok = idaapi.op_stkvar(ea, opnum)
-    if not ok:
+    if ok := idaapi.op_stkvar(ea, opnum):
+        # Now that it's set, call into op_structure to return it.
+        return op_structure(ea, opnum)
+    else:
         raise E.DisassemblerError(u"{:s}.op_stackvar({:#x}, {:d}) : Unable to set operand {:d} to a stack variable.".format(__name__, ea, opnum, opnum))
-
-    # Now that it's set, call into op_structure to return it.
-    return op_structure(ea, opnum)
 op_stack = op_stkvar = utils.alias(op_stackvar)
 
 @utils.multicase(opnum=six.integer_types)
@@ -1013,9 +1014,6 @@ def op_structure(ea, opnum):
             return results + (delta,)
         return tuple(results) if len(results) > 1 else results[0]
 
-    # Otherwise, we check if our operand is not a structure offset, but pointing
-    # to memory by having a reference. If it is then we'll need to figure the field
-    # being referenced by calculating the offset into structure ourselves.
     elif not idaapi.is_stroff(F, opnum) and ri:
         value = op_reference(ea, opnum)
         address = database.address.head(value)
@@ -1039,7 +1037,7 @@ def op_structure(ea, opnum):
 
         # If we received a list, then we can just return it with the delta.
         if isinstance(path, builtins.list) or count > 1:
-            return [item for item in path] + [delta]
+            return list(path) + [delta]
 
         # Figure out whether we need to include the offset in the result.
         results = tuple(path)
@@ -1047,7 +1045,6 @@ def op_structure(ea, opnum):
             return results + (delta,)
         return tuple(results) if len(results) > 1 else results[0]
 
-    # If it doesn't have a reference, then there's absolutely nothing we can do.
     elif not idaapi.is_stroff(F, opnum):
         raise E.MissingTypeOrAttribute(u"{:s}.op_structure({:#x}, {:d}) : Unable to identify the structure referenced by operand {:d} with flags ({:#x}).".format(__name__, ea, opnum, opnum, F))
 
@@ -1141,31 +1138,35 @@ def op_structure(ea, opnum):
 @utils.multicase(opnum=six.integer_types, structure=(structure.structure_t, idaapi.struc_t, six.string_types))
 def op_structure(opnum, structure, *path):
     '''Apply the specified `structure` along with any members in `path` to the instruction operand `opnum` at the current address.'''
-    return op_structure(ui.current.address(), opnum, [item for item in itertools.chain([structure], path)])
+    return op_structure(
+        ui.current.address(), opnum, list(itertools.chain([structure], path))
+    )
 @utils.multicase(opnum=six.integer_types, member=(structure.member_t, idaapi.member_t))
 def op_structure(opnum, member, *path):
     '''Apply the specified `member` along with any members in `path` to the instruction operand `opnum` at the current address.'''
-    return op_structure(ui.current.address(), opnum, [item for item in itertools.chain([member], path)])
+    return op_structure(
+        ui.current.address(), opnum, list(itertools.chain([member], path))
+    )
 
 ## address and opnum with variable-length path
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, structure=(structure.structure_t, idaapi.struc_t, six.string_types))
 def op_structure(ea, opnum, structure, *path):
     '''Apply the specified `structure` along with the members in `path` to the instruction operand `opnum` at the address `ea`.'''
-    return op_structure(ea, opnum, [item for item in itertools.chain([structure], path)])
+    return op_structure(ea, opnum, list(itertools.chain([structure], path)))
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, member=(structure.member_t, idaapi.member_t))
 def op_structure(ea, opnum, member, *path):
     '''Apply the specified `member` to the instruction operand `opnum` at the address `ea`.'''
-    return op_structure(ea, opnum, [item for item in itertools.chain([member], path)])
+    return op_structure(ea, opnum, list(itertools.chain([member], path)))
 
 ## operand reference with variable-length path
 @utils.multicase(reference=interface.opref_t, structure=(structure.structure_t, idaapi.struc_t, six.string_types))
 def op_structure(reference, structure, *path):
     '''Apply the specified `structure` along with the members in `path` to the operand pointed to by `reference`.'''
-    return op_structure(reference, [item for item in itertools.chain([structure], path)])
+    return op_structure(reference, list(itertools.chain([structure], path)))
 @utils.multicase(reference=interface.opref_t, member=(structure.member_t, idaapi.member_t))
 def op_structure(reference, member, *path):
     '''Apply the specified `member` along with the members in `path` to the instruction operand pointed to by `reference`.'''
-    return op_structure(reference, [item for item in itertools.chain([member], path)])
+    return op_structure(reference, list(itertools.chain([member], path)))
 
 ## all variations that take a tuple/list to apply to a given operand.
 @utils.multicase(reference=interface.opref_t, path=(builtins.tuple, builtins.list))
@@ -1176,7 +1177,7 @@ def op_structure(reference, path):
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, path=(builtins.tuple, builtins.list))
 def op_structure(ea, opnum, path):
     '''Apply the structure members in `path` to the instruction operand `opnum` at the address `ea`.'''
-    items = [item for item in path]
+    items = list(path)
     member = items.pop(0) if len(items) else ''
     if isinstance(member, six.string_types):
         sptr, fullpath = structure.by(member).ptr, items
@@ -1193,7 +1194,7 @@ def op_structure(ea, opnum, path):
         sptr, fullpath = member.parent.ptr, itertools.chain([member], items)
     else:
         raise E.InvalidParameterError(u"{:s}.op_structure({:#x}, {:d}, {!r}) : Unable to determine the structure from the provided path due to the first item being of an unsupported type ({!s}).".format(__name__, ea, opnum, path, member.__class__))
-    return op_structure(ea, opnum, sptr, [item for item in fullpath])
+    return op_structure(ea, opnum, sptr, list(fullpath))
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, sptr=idaapi.struc_t, path=(builtins.tuple, builtins.list))
 def op_structure(ea, opnum, sptr, path):
     '''Apply the structure identified by `sptr` along with the members in `path` to the instruction operand `opnum` at the address `ea`.'''
@@ -1202,7 +1203,12 @@ def op_structure(ea, opnum, sptr, path):
         raise E.InvalidTypeOrValueError(u"{:s}.op_structure({:#x}, {:d}, {:#x}, {!r}) : The requested address ({:#x}) is not defined as a code type.".format(__name__, ea, opnum, sptr.id, path, ea))
 
     # Convert the path to a list, and then validate it before we use it.
-    path, accepted = [item for item in path], (idaapi.member_t, structure.member_t, six.string_types, six.integer_types)
+    path, accepted = list(path), (
+        idaapi.member_t,
+        structure.member_t,
+        six.string_types,
+        six.integer_types,
+    )
     if any(not isinstance(item, accepted) for item in path):
         index, item = next((index, item) for index, item in enumerate(path) if not isinstance(item, accepted))
         raise E.InvalidParameterError(u"{:s}.op_structure({:#x}, {:d}, {:#x}, {!r}) : The path member at index {:d} has a type ({!s}) that is not supported.".format(__name__, ea, opnum, sptr.id, path, index, item.__class__))
@@ -1385,36 +1391,52 @@ def op_structurepath(ea, opnum):
 def op_structurepath(opnum, structure, *path, **delta):
     '''Apply the specified `structure` along with any members in `path` to the instruction operand `opnum` at the current address.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(ui.current.address(), opnum, [item for item in itertools.chain([structure], path, deltapath)])
+    return op_structurepath(
+        ui.current.address(),
+        opnum,
+        list(itertools.chain([structure], path, deltapath)),
+    )
 @utils.multicase(opnum=six.integer_types, member=(structure.member_t, idaapi.member_t))
 def op_structurepath(opnum, member, *path, **delta):
     '''Apply the specified `member` along with any members in `path` to the instruction operand `opnum` at the current address.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(ui.current.address(), opnum, [item for item in itertools.chain([member], path, deltapath)])
+    return op_structurepath(
+        ui.current.address(),
+        opnum,
+        list(itertools.chain([member], path, deltapath)),
+    )
 
 ## address and opnum with variable-length path
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, structure=(structure.structure_t, idaapi.struc_t, six.string_types))
 def op_structurepath(ea, opnum, structure, *path, **delta):
     '''Apply the specified `structure` along with the members in `path` to the instruction operand `opnum` at the address `ea`.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(ea, opnum, [item for item in itertools.chain([structure], path, deltapath)])
+    return op_structurepath(
+        ea, opnum, list(itertools.chain([structure], path, deltapath))
+    )
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, member=(structure.member_t, idaapi.member_t))
 def op_structurepath(ea, opnum, member, *path, **delta):
     '''Apply the specified `member` to the instruction operand `opnum` at the address `ea`.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(ea, opnum, [item for item in itertools.chain([member], path, deltapath)])
+    return op_structurepath(
+        ea, opnum, list(itertools.chain([member], path, deltapath))
+    )
 
 ## operand reference with variable-length path
 @utils.multicase(reference=interface.opref_t, structure=(structure.structure_t, idaapi.struc_t, six.string_types))
 def op_structurepath(reference, structure, *path, **delta):
     '''Apply the specified `structure` along with the members in `path` to the operand pointed to by `reference`.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(reference, [item for item in itertools.chain([structure], path, deltapath)])
+    return op_structurepath(
+        reference, list(itertools.chain([structure], path, deltapath))
+    )
 @utils.multicase(reference=interface.opref_t, member=(structure.member_t, idaapi.member_t))
 def op_structurepath(reference, member, *path, **delta):
     '''Apply the specified `member` along with the members in `path` to the instruction operand pointed to by `reference`.'''
     deltapath = [delta.pop('delta', 0)] if delta else []
-    return op_structurepath(reference, [item for item in itertools.chain([member], path, deltapath)])
+    return op_structurepath(
+        reference, list(itertools.chain([member], path, deltapath))
+    )
 
 ## all variations that take a tuple/list to apply to a given operand.
 @utils.multicase(reference=interface.opref_t, path=(builtins.tuple, builtins.list))
@@ -1425,7 +1447,7 @@ def op_structurepath(reference, path):
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, path=(builtins.tuple, builtins.list))
 def op_structurepath(ea, opnum, path):
     '''Apply the structure members in `path` to the instruction operand `opnum` at the address `ea`.'''
-    items = [item for item in path]
+    items = list(path)
     member = items.pop(0) if len(items) else ''
     if isinstance(member, six.string_types):
         sptr, fullpath = structure.by(member).ptr, items
@@ -1442,7 +1464,7 @@ def op_structurepath(ea, opnum, path):
         sptr, fullpath = member.parent.ptr, itertools.chain([member], items)
     else:
         raise E.InvalidParameterError(u"{:s}.op_structurepath({:#x}, {:d}, {!r}) : Unable to determine the structure from the provided path due to the first item being of an unsupported type ({!s}).".format(__name__, ea, opnum, path, member.__class__))
-    return op_structurepath(ea, opnum, sptr, [item for item in fullpath])
+    return op_structurepath(ea, opnum, sptr, list(fullpath))
 
 @utils.multicase(ea=six.integer_types, opnum=six.integer_types, sptr=idaapi.struc_t, path=(builtins.tuple, builtins.list))
 def op_structurepath(ea, opnum, sptr, path):
@@ -1452,7 +1474,12 @@ def op_structurepath(ea, opnum, sptr, path):
         raise E.InvalidTypeOrValueError(u"{:s}.op_structurepath({:#x}, {:d}, {:#x}, {!r}) : The requested address ({:#x}) is not defined as a code type.".format(__name__, ea, opnum, sptr.id, path, ea))
 
     # Convert the path to a list, and then validate it before we use it.
-    path, accepted = [item for item in path], (idaapi.member_t, structure.member_t, six.string_types, six.integer_types)
+    path, accepted = list(path), (
+        idaapi.member_t,
+        structure.member_t,
+        six.string_types,
+        six.integer_types,
+    )
     if any(not isinstance(item, accepted) for item in path):
         index, item = next((index, item) for index, item in enumerate(path) if not isinstance(item, accepted))
         raise E.InvalidParameterError(u"{:s}.op_structurepath({:#x}, {:d}, {:#x}, {!r}) : The path member at index {:d} has a type ({!s}) that is not supported.".format(__name__, ea, opnum, sptr.id, path, index, item.__class__))
@@ -1615,7 +1642,7 @@ def op_enumeration(ea, opnum):
     # that this operand uses. If it's not, then we have a single mask which is
     # idaapi.DEFMASK.
     if enumeration.bitfield(eid):
-        masks = [mask for mask in enumeration.masks.iterate(eid)]
+        masks = list(enumeration.masks.iterate(eid))
     else:
         masks = [idaapi.DEFMASK]
 
@@ -1651,14 +1678,7 @@ def op_enumeration(ea, opnum):
     # the caller. If it was a bitfield, then we need to check if there's
     # a single result, otherwise we return a tuple. If it was not a bitfield
     # then the enumeration member identifier should be more than enough.
-    if ok and res:
-        if enumeration.bitfield(eid):
-            return builtins.tuple(res) if len(res) > 1 else res[0]
-        return res[0]
-
-    # If we did get something but we missed a value for one of the masks,
-    # then this result is incomplete, but still okay to return.
-    elif res:
+    if ok and res or res:
         if enumeration.bitfield(eid):
             return builtins.tuple(res) if len(res) > 1 else res[0]
         return res[0]
@@ -1733,7 +1753,7 @@ def op_string(ea, opnum, strtype):
     # Now we can actually apply the opinfo_t to the specified operand, and then
     # cross-check that the operand info's string type matches what we set it to.
     res = opinfo(ea, opnum, info, flags=F)
-    return True if res.strtype == strtype else False
+    return res.strtype == strtype
 
 # XXX: these functions are pretty much deprecated in favor of interface.address.refinfo.
 @utils.multicase()
@@ -1771,7 +1791,7 @@ def op_reference(reference):
 def op_reference(ea, opnum):
     '''Return the address being referenced by the operand `opnum` belonging to the instruction at the address `ea`.'''
     insn, ops = at(ea), operands(ea)
-    if not(opnum < len(ops)):
+    if opnum >= len(ops):
         raise E.InvalidTypeOrValueError(u"{:s}.op_reference({:#x}, {:d}) : The specified operand number ({:d}) is larger than the number of operands ({:d}) for the instruction at address {:#x}.".format(__name__, ea, opnum, opnum, len(operands(ea)), ea))
 
     # Grab the operand and its reference if it it actually has one. We'll use this
@@ -1785,22 +1805,6 @@ def op_reference(ea, opnum):
             logging.debug(u"{:s}.op_reference({:#x}, {:d}) : The disassembler could not calculate the target for the reference ({:d}) at address {:#x}.".format(__name__, ea, opnum, ri.flags & idaapi.REFINFO_TYPE, ea))
             return value
         return target.value()
-
-        # If we actually wanted to, we could use the reference information to figure
-        # out the actual offset to the data that is being referenced.
-        base, target = (item.value() for item in [base, target])
-        if base:
-            base, offset = base, target - base
-            return base + offset
-
-        # If we weren't given the base address, then we're supposed to figure it out ourselves.
-        seg = idaapi.getseg(ea)
-        if seg is None:
-            raise E.SegmentNotFoundError(u"{:s}.op_reference({:#x}, {:d}) : Unable to locate segment containing the specified instruction address ({:#x}).".format(__name__, ea, ea))
-
-        imagebase, segbase = idaapi.get_imagebase(), idaapi.get_segm_base(seg)
-        base, offset = imagebase, seg.start_ea - imagebase
-        return base + offset
 
     # Otherwise, we need to use the default reference type. Unless the user changed
     # the default reference type, this should always result in returning the immediate.

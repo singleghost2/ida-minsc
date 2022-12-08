@@ -50,8 +50,7 @@ class UnicodeException(E.BaseException):
             if length == 0:
                 return ""
             elif length == 1:
-                item = self.args[0]
-                return str(item)
+                return str(self.args[0])
             return str(self.args)
 
     # tp_repr
@@ -64,8 +63,7 @@ class UnicodeException(E.BaseException):
 
     # tp_as_sequence
     def __iter__(self):
-        for item in self.args:
-            yield item
+        yield from self.args
         return
 
     # tp_as_sequence
@@ -88,7 +86,7 @@ class UnicodeException(E.BaseException):
         return self.__args__
     @args.setter
     def args(self, args):
-        self.__args__ = tuple(item for item in args)
+        self.__args__ = tuple(args)
 
     # tp_methods
     def __reduce__(self):

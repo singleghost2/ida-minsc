@@ -131,7 +131,7 @@ def unmangle_name(name):
         joined = '::'.join(components)
 
     # Check to see if this is some operator of some kind.
-    if joined.count(' ') > 0 and joined.rsplit(' ', 2)[-2].endswith('operator'):
+    if ' ' in joined and joined.rsplit(' ', 2)[-2].endswith('operator'):
         return '_'.join(joined.rsplit(' ', 2)[-2:])
 
     # Now we can drop everything before the last space, and then return it.
